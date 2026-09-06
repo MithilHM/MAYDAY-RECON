@@ -1,0 +1,569 @@
+# =============================================================================
+# MAYDAY-RECON - Attack Definition Language (DSL)
+# File: mayday/attack.dsl.yml
+# =============================================================================
+# A YAML-based attack definition language for bank reconciliation testing.
+#
+# The reconciliation engine ingests one or more attack definitions, each of
+# which describes a single fault that can be injected into a reconciliation
+# run.  Attack definitions are declarative: the engine applies them, checks
+# preconditions, injects the fault at the intended stage, and reports whether
+# the attack was applied and caught.
+#
+# ---------------------------------------------------------------------------
+# TOP-LEVEL SCHEMA
+# ---------------------------------------------------------------------------
+# version:      (string, required) DSL schema version this file complies with.
+# attacks:      (list, required)   One or more attack definitions.
+#
+# ---------------------------------------------------------------------------
+# ATTACK DEFINITION SCHEMA
+# ---------------------------------------------------------------------------
+# Each entry under `attacks` is a map with the following keys:
+#
+#   name:        (string, required) Machine-friendly unique identifier.
+#                Uses snake_case, e.g. `transaction_fraud`.
+#
+#   description: (string, required) Human-readable summary of what the attack
+#                simulates and why a reconciliation test would care.
+#
+#   type:        (enum, required) One of the canonical attack types.  See
+#                `definitions.attack_types` for the enumerated list and the
+#                canonical definition of each.
+#
+#   severity:    (enum, required) Relative impact if the fault goes undetected.
+#                Allowed: low | medium | high | critical.
+#
+#   enabled:     (boolean, optional, default true) When false the attack is
+#                parsed but not applied.  Useful for staging suites.
+#
+#   parameters:  (map, required) Attack-specific configuration.  Keys and
+#                meanings are defined per type under `definitions.attack_types`.
+#                At minimum this map must be present; it may be empty `{}`
+#                where a type needs no tuning.
+#
+#   how_to_apply:
+#     stage:     (enum, required) Reconciliation stage where the fault is
+#                injected.  Allowed values are defined under
+#                `definitions.stages`: load | transform | validate | match |
+#                report.
+#     method:    (enum, required) Injection method.  Allowed values are defined
+#                under `definitions.methods`: mutate | drop | insert | delay |
+#                leak | duplicate | corrupt.
+#     target:    (string, required) Data element or subsystem the attack acts
+#                on.  Free-form but should reference a field, table, file, or
+#                pipeline step, e.g. `bank_statement.transactions`.
+#     notes:     (string, optional) Free-form guidance for the tester/engine
+#                on how to realize the injection.
+#
+#   expected_failure:
+#     detection: (string, optional) How the reconciliation should detect the
+#                attack (the control that should catch it).
+#     undetected_surface: (string, optional) What is compromised if the attack
+#                is not caught.
+#
+#   tags:        (list of string, optional) Free-form labels (e.g. audit,
+#                high_value, regression) used to filter or group attacks.
+#
+# ---------------------------------------------------------------------------
+# DEFINITIONS AND ENUMERATIONS
+# ---------------------------------------------------------------------------
+# The `definitions` top-level block documents the shared vocabulary used by the
+# attack definitions.  It is documentation metadata only; the engine validates
+# individual attacks against these enumerated values.
+# =============================================================================
+
+# DSL schema version.  Bump when the top-level structure changes.
+version: "1.0"
+
+# Enumerated vocabulary and canonical type reference.  This block is metadata;
+# each attack under `attacks` must target one of the documented `attack_types`.
+definitions:
+  # Canonical attacks and, for each, the expected parameters map.
+  # The `parameters` key of an attack definition MUST conform to the schema
+  # listed here for its `type`.
+  attack_types:
+    transaction_fraud:
+      summary: >
+        A transaction is entered, altered, or approved fraudulently so that the
+        ledger no longer reflects a genuine economic event.
+      parameters:
+        fraud_type:   string   # e.g. invented_credit, unauthorized_debit, altered_amount
+        amount_range: string   # e.g. "1000..25000" - realistic magnitude to inject
+        count:        integer  # number of fraudulent transactions to inject (>= 1)
+
+    GL_mismatch:
+      summary: >
+        The general ledger balances diverge from the sub-ledger or bank statement
+        for the same period, typically a missing or extra posting between systems.
+      parameters:
+        difference_type: string  # e.g. unreconciled, duplicate_posting, missing_posting
+        tolerance:       string  # e.g. "0.00" - engine is allowed to ignore below this
+        affected_acct:   string  # e.g. "GL-1020-AR" - account code under test
+
+    timing_anomaly:
+      summary: >
+        A posting carries a value date or timestamp that is inconsistent with
+        the reconciliation window, creating an out-of-window difference.
+      parameters:
+        window_offset_days: integer  # how far the value date is shifted
+        window_direction:   string   # early | late
+        affected_date:      string   # YYYY-MM-DD anchor date for the window
+
+    batch_corruption:
+      summary: >
+        A batch of records loses, gains, or mutates entries during ingestion so
+        a block of rows is no longer trustworthy.
+      parameters:
+        batch_id:      string   # identifier of the corrupt batch
+        corruption:    string   # dropped | duplicated | order_shift | checksum_broken
+        rows_affected: integer  # number of rows within the batch to corrupt
+
+    crossover_error:
+      summary: >
+        A record crosses the reconciliation boundary incorrectly - posted on the
+        wrong side, into the wrong account, or at the wrong cutoff, so the two
+        sides no longer net to zero.
+      parameters:
+        amount:      string  # e.g. "12,345.67" - magnitude of the crossover
+        direction:   string  # positive | negative - sign on the mismatched side
+        side:        string  # dr | cr | transfer_in | transfer_out
+        cutoff:      string  # e.g. "end_of_day" - boundary across which it crosses
+
+    amount_discrepancy:
+      summary: >
+        The recorded monetary amount differs from the source-of-truth amount by
+        a rounding, transposition, or manual-entry error.
+      parameters:
+        expected: string   # e.g. "1000.00" - correct amount
+        actual:   string   # e.g. "0100.00" - recorded amount
+        delta:    string   # e.g. "900.00" - the injected difference
+        reason:   string   # rounding | transposition | manual_entry | integer_overflow
+
+    invoice_mismatch:
+      summary: >
+        An invoice on the accounts-receivable side does not match the
+        corresponding payment or statement line (number, amount, or reference).
+      parameters:
+        invoice_id: string   # invoice identifier under test
+        field:      string   # invoice_number | amount | ref | currency
+        mutate_to:  string   # value the field is changed to
+        original:   string   # original value of the field
+
+    status_mismatch:
+      summary: >
+        A record is marked with a status that is inconsistent with its economic
+        reality (e.g. reconciled when it is unreconciled, settled when unpaid).
+      parameters:
+        record_id:     string  # id of the record whose status is changed
+        expected:      string  # correct status (e.g. pending, cleared, unreconciled)
+        injected:      string  # status it is set to (e.g. settled, reconciled)
+        transition:    string  # how status was mutated (manual_override | stale_state)
+
+    duplicate_detection:
+      summary: >
+        A control falsely flags a legitimate record as a duplicate, or the
+        reconciliation fails to detect a genuine duplicate.
+      parameters:
+        duplicate_mode: string   # false_positive | missed_duplicate
+        source:         string   # source of the duplicated record
+        match_key:      string   # key used to decide duplication
+        copies:         integer  # number of copies to inject
+
+    fraudulent_reporting:
+      summary: >
+        Reporting or export output is modified to misrepresent the reconciled
+        position (totals, counts, or sign), independent of the underlying ledger.
+      parameters:
+        report:    string   # report id or name being manipulated
+        section:   string   # which section is altered (summary | detail | total)
+        mutate:    string   # total, count, sign, rounding - what is changed
+        bias:      string   # inflate | deflate | hide | fabricate
+        magnitude: string   # e.g. "5%" - amount or ratio of the misstatement
+
+    data_leak:
+      summary: >
+        Reconciled or sensitive data is exposed to an unauthorized consumer
+        (endpoint, export, or log) outside the intended perimeter.
+      parameters:
+        field:            string  # sensitive field at risk (e.g. account_no, ssn)
+        target:           string  # where it leaks (log | export | api | email)
+        sample_size:      integer # number of records exposed to prove the leak
+        authorization:    string  # e.g. "system_bot" - acting identity
+
+    rate_limiting:
+      summary: >
+        A reconciliation or paired API/control endpoint is overwhelmed or
+        throttled, degrading availability, timing guarantees, or correctness.
+      parameters:
+        endpoint:        string   # endpoint or job under load
+        request_rate:    string   # e.g. "5000/s" - offered load
+        burst:           integer  # max burst size before throttle
+        target_effect:   string   # timeout | 429 | dropped_job | degraded_correctness
+        window_seconds:  integer  # duration of the load window
+
+  # Allowed reconciliation stages where a fault can be injected.
+  stages:
+    - load
+    - transform
+    - validate
+    - match
+    - report
+
+  # Allowed injection methods.
+  methods:
+    - mutate      # change an existing value/status
+    - drop        # omit a record that should exist
+    - insert      # add a record that should not exist
+    - delay       # hold a record/job back in time
+    - leak        # expose data to an unauthorized consumer
+    - duplicate   # repeat a record to create a false match/dup
+    - corrupt     # damage a batch/checksum/integrity marker
+
+  # Allowed severities.
+  severities:
+    - low
+    - medium
+    - high
+    - critical
+
+# -----------------------------------------------------------------------------
+# SAMPLE ATTACK DEFINITIONS
+# -----------------------------------------------------------------------------
+# One complete, runnable sample is provided for every canonical attack type so
+# the schema serves as both reference and an executable smoke-test suite.
+# -----------------------------------------------------------------------------
+attacks:
+  - name: transaction_fraud
+    description: >
+      An employee posts a fabricated credit that inflates the cash position for
+      one branch before month-end, so the ledger shows funds that never came in.
+    type: transaction_fraud
+    severity: critical
+    enabled: true
+    parameters:
+      fraud_type: invented_credit
+      amount_range: "1000..25000"
+      count: 5
+    how_to_apply:
+      stage: load
+      method: insert
+      target: bank_statement.transactions
+      notes: >
+        Inject 5 fabricated credit rows dated inside the current window during
+        the load stage so they flow through matching like genuine entries.
+    expected_failure:
+      detection: >-
+        Daily cash-position control should flag credits with no matching bank
+        remittance in the same business day.
+      undetected_surface: >-
+        Inflated cash balance is reported and could drive a false positive
+        credit decision or a reconciliation sign-off of non-existent funds.
+    tags: [audit, high_value, month_end]
+
+  - name: gl_unreconciled_journal
+    description: >
+      A posting is made to the general ledger without a matching sub-ledger
+      entry, leaving the GL balance out of line with the bank statement.
+    type: GL_mismatch
+    severity: high
+    enabled: true
+    parameters:
+      difference_type: unreconciled
+      tolerance: "0.00"
+      affected_acct: "GL-1020-AR"
+    how_to_apply:
+      stage: transform
+      method: mutate
+      target: general_ledger.postings
+      notes: >
+        Add a standalone GL debit for account GL-1020-AR with no matching
+        sub-ledger or bank detail row in the same period.
+    expected_failure:
+      detection: >-
+        Account-level reconciliation (GL vs sub-ledger) should surface the
+        difference as an outstanding item.
+      undetected_surface: >-
+        Unreconciled GL balance persists and carry-forward control totals drift
+        from source-of-truth.
+    tags: [period_end, control_test]
+
+  - name: value_date_out_of_window
+    description: >
+      A cleared payment is backdated outside the current reconciliation window,
+      so it is excluded and the daily match is short by the payment amount.
+    type: timing_anomaly
+    severity: medium
+    enabled: true
+    parameters:
+      window_offset_days: 7
+      window_direction: late
+      affected_date: "2026-08-31"
+    how_to_apply:
+      stage: validate
+      method: delay
+      target: clearing.value_date
+      notes: >
+        Move the value date of an otherwise-correct cleared payment to 7 days
+        after the anchor date so the matching window excludes it.
+    expected_failure:
+      detection: >-
+        Window-boundary check should report the payment as out-of-window and
+        flag it for manual clearance.
+      undetected_surface: >-
+        The daily reconciliation under-reports cleared cash and carry-forward
+        balances become inconsistent across the cutoff.
+    tags: [cutoff, timeliness]
+
+  - name: batch_checksum_corruption
+    description: >
+      A nightly batch ingest loses 40 rows and breaks its checksum, so the
+      batch totals no longer match the feeder system.
+    type: batch_corruption
+    severity: high
+    enabled: true
+    parameters:
+      batch_id: "BATCH-2026-08-31-042"
+      corruption: dropped
+      rows_affected: 40
+    how_to_apply:
+      stage: load
+      method: corrupt
+      target: feeder.batches
+      notes: >
+        Drop 40 rows from batch BATCH-2026-08-31-042 during load and break the
+        batch checksum so the ingestion integrity control must catch it.
+    expected_failure:
+      detection: >-
+        Batch integrity control (row count + checksum vs feeder) should reject
+        or quarantine the incomplete batch.
+      undetected_surface: >-
+        A silently shortened batch propagates missing transactions into match
+        and reduces reported reconciled volume.
+    tags: [ingestion, integrity]
+
+  - name: crossover_debit_credit
+    description: >
+      A transfer is posted as a debit on the wrong side of the ledger, so the
+      two legs no longer net to zero across the cutoff.
+    type: crossover_error
+    severity: high
+    enabled: true
+    parameters:
+      amount: "12,345.67"
+      direction: negative
+      side: dr
+      cutoff: end_of_day
+    how_to_apply:
+      stage: match
+      method: mutate
+      target: transfers.netting
+      notes: >
+        Post the transfer leg with the wrong sign/direction across the
+        end-of-day cutoff so the netting control must flag the mismatch.
+    expected_failure:
+      detection: >-
+        Zero-netting control over the two transfer legs should flag that they
+        no longer cancel.
+      undetected_surface: >-
+        A crossed journal creates a permanent hiding place for out-of-balance
+        amounts and skews period netting.
+    tags: [netting, audit]
+
+  - name: transposition_amount
+    description: >
+      A manual correction transposes two digits, recording 89.50 instead of the
+      correct 98.50 and leaving a 9.00 difference.
+    type: amount_discrepancy
+    severity: medium
+    enabled: true
+    parameters:
+      expected: "98.50"
+      actual: "89.50"
+      delta: "9.00"
+      reason: transposition
+    how_to_apply:
+      stage: validate
+      method: mutate
+      target: journal_entry.amount
+      notes: >
+        On a single journal correction, replace the amount with the transposed
+        value so amount-validation must catch the delta.
+    expected_failure:
+      detection: >-
+        Amount-difference validation vs source should flag the 9.00 variance
+        outside tolerance.
+      undetected_surface: >-
+        Small transposition differences accumulate and can hide behind rounding
+        tolerance if not controlled.
+    tags: [amount, tolerance]
+
+  - name: invoice_reference_mismatch
+    description: >
+      A payment references a remittance advice whose number no longer matches
+      the invoice it claims to settle.
+    type: invoice_mismatch
+    severity: medium
+    enabled: true
+    parameters:
+      invoice_id: "INV-77821"
+      field: ref
+      mutate_to: "INV-99887"
+      original: "INV-77821"
+    how_to_apply:
+      stage: match
+      method: mutate
+      target: ar.payments.remittance
+      notes: >
+        Change the remittance reference on the payment from INV-77821 to
+        INV-99887 so the AR multi-key match must fail.
+    expected_failure:
+      detection: >-
+        Multi-key match (invoice number + amount) should leave the payment
+        unmatched or flagged under the wrong invoice.
+      undetected_surface: >-
+        Money is applied to the wrong invoice, aging is distorted, and dunning
+        may chase a settled account.
+    tags: [ar, matching]
+
+  - name: stale_status_override
+    description: >
+      A cleared check is re-marked as settled via a manual override even though
+      the bank has not cleared it, hiding an outstanding item.
+    type: status_mismatch
+    severity: critical
+    enabled: true
+    parameters:
+      record_id: "CHK-55210"
+      expected: cleared
+      injected: settled
+      transition: manual_override
+    how_to_apply:
+      stage: report
+      method: mutate
+      target: check.outstanding.status
+      notes: >
+        Override the status of check CHK-55210 from cleared to settled so the
+        outstanding-item report must detect the inconsistency with bank state.
+    expected_failure:
+      detection: >-
+        Status-vs-bank reconciliation should flag the record as both cleared and
+        settled (contradictory lifecycle state).
+      undetected_surface: >-
+        An outstanding check can be reported as settled, hiding a real cash
+        shortfall from finance.
+    tags: [lifecycle, high_value]
+
+  - name: duplicate_invoice_control
+    description: >
+      A legitimate invoice is injected twice into the match stream; the
+      duplicate-detection control must prevent it from matching twice.
+    type: duplicate_detection
+    severity: medium
+    enabled: true
+    parameters:
+      duplicate_mode: missed_duplicate
+      source: ar.invoices
+      match_key: "invoice_number+amount"
+      copies: 2
+    how_to_apply:
+      stage: match
+      method: duplicate
+      target: ar.invoices
+      notes: >
+        Re-inject invoice INV-77821 into the match stream so the dedupe key
+        must collapse the two copies into one.
+    expected_failure:
+      detection: >-
+        Duplicate-detection on invoice_number+amount should collapse the second
+        copy or flag it as a suspected duplicate for review.
+      undetected_surface: >-
+        The same economic event is counted twice, inflating receivables and
+        reconciled volumes.
+    tags: [dedupe, ar]
+
+  - name: inflated_report_total
+    description: >
+      The daily reconciliation report overstates the reconciled total by 5% to
+      make the day look fully matched.
+    type: fraudulent_reporting
+    severity: critical
+    enabled: true
+    parameters:
+      report: "DAILY-RECON"
+      section: total
+      mutate: total
+      bias: inflate
+      magnitude: "5%"
+    how_to_apply:
+      stage: report
+      method: mutate
+      target: reports.daily_recon.total
+      notes: >
+        Inflate the reconciled total line in the DAILY-RECON report by ~5% so
+        the reporting/export control must prove the figure against the ledger.
+    expected_failure:
+      detection: >-
+        Report-vs-ledger reconciliation should recompute totals and flag the
+        5% variance.
+      undetected_surface: >-
+        A falsified headline figure is signed off and externally reported,
+        misrepresenting the bank position.
+    tags: [reporting, audit, high_value]
+
+  - name: account_number_leak
+    description: >
+      A log exporter is misconfigured so full account numbers are written to a
+      shared, low-permission log stream.
+    type: data_leak
+    severity: high
+    enabled: true
+    parameters:
+      field: account_no
+      target: log
+      sample_size: 3
+      authorization: system_bot
+    how_to_apply:
+      stage: report
+      method: leak
+      target: exports.logs.account_no
+      notes: >
+        Enable logging of full account numbers for a shared application log so
+        the redaction control on the export path must strip them.
+    expected_failure:
+      detection: >-
+        Redaction/inspection control on the export or log path should redact or
+        reject the sensitive field.
+      undetected_surface: >-
+        PII/financial data is available to unauthorized readers and could be
+        exfiltrated under least-privilege failures.
+    tags: [privacy, pii, least_privilege]
+
+  - name: reconciliation_api_throttle
+    description: >
+      The reconciliation status API is driven with a high burst rate so it
+      degrades and returns throttling responses instead of accurate status.
+    type: rate_limiting
+    severity: medium
+    enabled: true
+    parameters:
+      endpoint: /api/v1/recon/status
+      request_rate: "5000/s"
+      burst: 2500
+      target_effect: degraded_correctness
+      window_seconds: 60
+    how_to_apply:
+      stage: report
+      method: delay
+      target: api.recon_status
+      notes: >
+        Drive /api/v1/recon/status at a burst that exhausts the limiter so the
+        endpoint's availability and inconsistency handling are exercised.
+    expected_failure:
+      detection: >-
+        Availability and throttling controls should register 429/timeout or
+        maintain correctness under load; any silent wrong-status must be caught.
+      undetected_surface: >-
+        Under load the API can return stale or partial status, eroding trust in
+        recon results and hiding fresh mismatches.
+    tags: [availability, api, performance]
