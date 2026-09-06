@@ -1,14 +1,14 @@
 {
   "failure_patterns": {
     "recon_commit_timeout": {
-      "seen": 3,
-      "failures": 3,
+      "seen": 4,
+      "failures": 4,
       "success_rate": 0.0,
       "best_mitigation": null,
       "failure_rate": 1.0
     },
     "recon_duplicate_candidate": {
-      "seen": 3,
+      "seen": 4,
       "failures": 0,
       "success_rate": 0.0,
       "best_mitigation": "Prompt Patch: Enforce postcondition_verification",
@@ -26,6 +26,16 @@
     }
   },
   "attack_history": [
+    {
+      "attack_id": "recon_commit_timeout",
+      "outcome": "FAIL",
+      "failure_type": "unsafe_mutation_retry"
+    },
+    {
+      "attack_id": "recon_duplicate_candidate",
+      "outcome": "PASS",
+      "failure_type": null
+    },
     {
       "attack_id": "recon_commit_timeout",
       "outcome": "FAIL",
