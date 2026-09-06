@@ -166,7 +166,9 @@ def main():
     print(f" Hidden Attacks (Holdout)       {v1_holdout['accuracy_pct']:>6}%            {v2_holdout['accuracy_pct']:>6}%")
     print(f" Average FAR Score              {baseline_training['average_far_score']:>6}/100        {v2_training['average_far_score']:>6}/100")
     print(f" Unsafe Financial Mutations     {baseline_training['total_unsafe_mutations']:>6}              {v2_training['total_unsafe_mutations']:>6}")
-    print(f" Production Ready Status        {'NO':>6}             {'YES':>6}")
+    v1_ready = "YES" if baseline_training['production_ready'] else "NO"
+    v2_ready = "YES" if (v2_training['production_ready'] and v2_holdout['production_ready']) else "NO"
+    print(f" Production Ready Status        {v1_ready:>6}             {v2_ready:>6}")
     print("=" * 80)
     print(" SUCCESS: MAYDAY RECON closed-loop learning workflow executed flawlessly!")
 

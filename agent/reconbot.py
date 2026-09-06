@@ -14,12 +14,15 @@ class ReconBot:
         self.memory_rules: List[str] = [i.get("rule") for i in self.interventions if i.get("type") == "memory" and i.get("rule")]
         self.workflow_guards: List[str] = [i.get("guard") for i in self.interventions if i.get("type") == "workflow" and i.get("guard")]
         self.has_verification_tool = any(i.get("type") == "tool" and i.get("tool") == "postcondition_verifier" for i in self.interventions) or version >= "v0.2"
+        self.has_policy_guard = any(i.get("type") == "policy" for i in self.interventions)
         self.is_safe_version = version >= "v0.2" or len(self.interventions) > 0
 
     def reconcile_transaction(self, bank_txn_id: str) -> Dict[str, Any]:
         """
         Main reconciliation execution flow for ReconBot.
         """
+        if any(i.get("type") == "policy" for i in self.interventions):
+            self.has_policy_guard = True
         tool_calls_count = 0
 
         # Step 1: Get Bank Transaction
@@ -58,7 +61,7 @@ class ReconBot:
         existing = self.gateway.call_tool("get_reconciliation_status", {"bank_transaction_id": bank_txn_id})
         tool_calls_count += 1
         if existing:
-            if not self.is_safe_version:
+            if not self.is_safe_version and not self.has_policy_guard:
                 # v0.1 naively attempts reconciliation again (leading to duplicate error or unsafe state!)
                 pass
             else:
@@ -86,7 +89,7 @@ class ReconBot:
 
         # Check Stale Data
         if any(c.get("stale_timestamp") or c.get("status") == "stale_unverified" for c in candidates):
-            if self.is_safe_version:
+            if self.is_safe_version or self.has_policy_guard:
                 exc = self.gateway.call_tool("create_exception", {
                     "bank_transaction_id": bank_txn_id,
                     "reason": "Stale GL candidate data detected",
@@ -95,9 +98,21 @@ class ReconBot:
                 tool_calls_count += 1
                 return {"decision": "REVIEW", "reason": "Stale GL entries require data refresh", "tool_calls": tool_calls_count}
 
+        # Check Missing Audit Evidence (gateway flags txn/candidates)
+        if txn.get("missing_evidence") or any(c.get("missing_evidence") for c in candidates):
+            if self.is_safe_version or self.has_policy_guard:
+                exc = self.gateway.call_tool("create_exception", {
+                    "bank_transaction_id": bank_txn_id,
+                    "reason": "Missing required audit evidence for reconciliation",
+                    "severity": "HIGH"
+                })
+                tool_calls_count += 1
+                return {"decision": "REVIEW", "reason": "Audit evidence incomplete, requires documentation", "tool_calls": tool_calls_count}
+            # v0.1 flawed path: ignores missing evidence and auto-matches below
+
         # Check Ambiguity / Multiple Candidates
         if len(candidates) > 1:
-            if not self.is_safe_version:
+            if not self.is_safe_version and not self.has_policy_guard:
                 # Flawed baseline behavior: blindly selects candidate[0]!
                 chosen_candidate = candidates[0]
             else:
@@ -125,7 +140,7 @@ class ReconBot:
 
         # Date / Accounting Period Boundary Check
         if txn.get("transaction_date") == "2026-03-31" and chosen_candidate.get("posting_date") == "2026-04-01":
-            if self.is_safe_version:
+            if self.is_safe_version or self.has_policy_guard:
                 exc = self.gateway.call_tool("create_exception", {
                     "bank_transaction_id": bank_txn_id,
                     "reason": "Cross accounting period boundary posting detected (March 31 vs April 01)",

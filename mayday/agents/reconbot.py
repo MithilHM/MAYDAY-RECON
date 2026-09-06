@@ -59,6 +59,11 @@ class AttackInstance:
     end_time: Optional[datetime] = None
     injection_result: Optional[Dict] = None
 
+    @property
+    def attack_id(self) -> str:
+        """Alias for id (legacy test compatibility)."""
+        return self.id
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization"""
         return {
@@ -88,6 +93,48 @@ class ReconBot:
 
         self._load_attack_definitions()
 
+    @staticmethod
+    def _normalize_attack_config(attack_config: Dict) -> Dict:
+        """Accept legacy DSL, verbose DSL, and PRD S11 (id/workflow/setup/expected) entries."""
+        cfg = dict(attack_config)
+        if "id" in cfg and "name" not in cfg:
+            cfg["name"] = cfg["id"]
+        if "id" in cfg and "type" not in cfg:
+            # PRD S11 format -> map onto legacy AttackDefinition fields.
+            expected = cfg.get("expected", {}) or {}
+            must = expected.get("must", []) or []
+            target = cfg.get("target", {})
+            target_str = target.get("txn_id", "bank_statement.transactions") if isinstance(target, dict) else str(target)
+            return {
+                "name": cfg.get("name", cfg.get("id", "unknown")),
+                "description": cfg.get("description", cfg.get("name", "")),
+                "type": "transaction_fraud",
+                "severity": str(cfg.get("severity", "medium")).lower(),
+                "enabled": True,
+                "parameters": cfg.get("setup", {}),
+                "stage": "match",
+                "method": "mutate",
+                "target": str(target_str),
+                "detection": ",".join(must),
+                "tags": [],
+            }
+        # Legacy/verbose DSL: pick known keys, derive stage/method/target.
+        how = cfg.get("how_to_apply", {}) or {}
+        exp_fail = cfg.get("expected_failure", {}) or {}
+        return {
+            "name": cfg.get("name", cfg.get("id", "unknown")),
+            "description": cfg.get("description", ""),
+            "type": cfg.get("type", "transaction_fraud"),
+            "severity": str(cfg.get("severity", "medium")).lower(),
+            "enabled": cfg.get("enabled", True),
+            "parameters": cfg.get("parameters", cfg.get("setup", {})),
+            "stage": how.get("stage", cfg.get("stage", "match")),
+            "method": how.get("method", cfg.get("method", "mutate")),
+            "target": str(how.get("target", cfg.get("target", ""))),
+            "detection": exp_fail.get("detection", cfg.get("detection", "")),
+            "tags": cfg.get("tags", []),
+        }
+
     def _load_attack_definitions(self):
         """Load and parse attack definitions from DSL file"""
         try:
@@ -98,7 +145,7 @@ class ReconBot:
             attack_list = dsl_data.get('attacks', [])
 
             for attack_config in attack_list:
-                attack = AttackDefinition(**attack_config)
+                attack = AttackDefinition(**self._normalize_attack_config(attack_config))
                 validation_errors = attack.validate()
 
                 if validation_errors:
@@ -354,7 +401,7 @@ class ReconBot:
             attack_list = dsl_data.get('attacks', [])
 
             for i, attack_config in enumerate(attack_list):
-                attack = AttackDefinition(**attack_config)
+                attack = AttackDefinition(**self._normalize_attack_config(attack_config))
                 validation_errors = attack.validate()
 
                 validation_result["attacks"].append({

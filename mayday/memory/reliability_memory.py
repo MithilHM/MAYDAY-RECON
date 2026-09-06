@@ -66,6 +66,27 @@ class ReliabilityMemory:
         sorted_attacks = sorted(patterns.items(), key=lambda x: x[1].get("failure_rate", 0.0), reverse=True)
         return [k for k, v in sorted_attacks]
 
+    def attack_success_rates(self) -> Dict[str, float]:
+        """Return {attack_id: failure_rate} for all tracked attacks."""
+        patterns = self.memory.get("failure_patterns", {})
+        rates: Dict[str, float] = {}
+        for attack_id, data in patterns.items():
+            if isinstance(data, dict):
+                if isinstance(data.get("failure_rate"), (int, float)):
+                    rates[attack_id] = float(data["failure_rate"])
+                else:
+                    seen = data.get("seen", 0) or 0
+                    fails = data.get("failures", 0) or 0
+                    rates[attack_id] = round(fails / seen, 2) if seen else 0.0
+            else:
+                rates[attack_id] = 0.0
+        return rates
+
+    def prioritize_attacks(self, candidate_ids: List[str]) -> List[str]:
+        """Sort candidate attack ids by failure_rate desc (riskiest first)."""
+        rates = self.attack_success_rates()
+        return sorted(candidate_ids, key=lambda aid: rates.get(aid, 0.0), reverse=True)
+
     def get_summary(self) -> Dict[str, Any]:
         return {
             "total_attacks_tested": len(self.memory["attack_history"]),
