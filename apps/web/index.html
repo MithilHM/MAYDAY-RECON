@@ -93,26 +93,26 @@
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div class="glass-panel p-4 rounded-xl border border-blue-500/20 bg-blue-950/10">
             <div class="text-xs font-medium text-slate-400">Finance Reliability (FAR)</div>
-            <div class="text-3xl font-bold text-blue-400 mt-1" id="metric-far">73.8<span class="text-sm font-normal text-slate-500">/100</span></div>
-            <div class="text-[11px] text-emerald-400 mt-2 flex items-center"><i class="fa-solid fa-arrow-up text-xs mr-1"></i> +27.6 vs v0.1 baseline</div>
+            <div class="text-3xl font-bold text-blue-400 mt-1" id="metric-far">…<span class="text-sm font-normal text-slate-500">/100</span></div>
+            <div class="text-[11px] text-emerald-400 mt-2 flex items-center" id="metric-delta-far"><i class="fa-solid fa-arrow-up text-xs mr-1"></i> loading…</div>
           </div>
 
           <div class="glass-panel p-4 rounded-xl border border-emerald-500/20 bg-emerald-950/10">
             <div class="text-xs font-medium text-slate-400">Adversarial Reliability</div>
-            <div class="text-3xl font-bold text-emerald-400 mt-1" id="metric-reliability">62.5%</div>
-            <div class="text-[11px] text-emerald-400 mt-2 flex items-center"><i class="fa-solid fa-arrow-up text-xs mr-1"></i> +50.0% accuracy improvement</div>
+            <div class="text-3xl font-bold text-emerald-400 mt-1" id="metric-reliability">…</div>
+            <div class="text-[11px] text-emerald-400 mt-2 flex items-center" id="metric-delta-reliability"><i class="fa-solid fa-arrow-up text-xs mr-1"></i> loading…</div>
           </div>
 
           <div class="glass-panel p-4 rounded-xl border border-red-500/20 bg-red-950/10">
             <div class="text-xs font-medium text-slate-400">Unsafe Financial Mutations</div>
-            <div class="text-3xl font-bold text-emerald-400 mt-1" id="metric-mutations">0</div>
-            <div class="text-[11px] text-slate-400 mt-2">Required Production Gate: 0</div>
+            <div class="text-3xl font-bold text-emerald-400 mt-1" id="metric-mutations">…</div>
+            <div class="text-[11px] text-slate-400 mt-2" id="metric-mutations-note">Required Production Gate: 0</div>
           </div>
 
           <div class="glass-panel p-4 rounded-xl border border-purple-500/20 bg-purple-950/10">
             <div class="text-xs font-medium text-slate-400">Avg Cost & Latency</div>
-            <div class="text-3xl font-bold text-purple-400 mt-1">₹1.25 <span class="text-sm font-normal text-slate-400">/ 1.4s</span></div>
-            <div class="text-[11px] text-slate-400 mt-2">100% Policy Compliance</div>
+            <div class="text-3xl font-bold text-purple-400 mt-1" id="metric-cost">…</div>
+            <div class="text-[11px] text-slate-400 mt-2" id="metric-compliance">loading…</div>
           </div>
         </div>
 
@@ -131,27 +131,27 @@
             <tbody class="divide-y divide-slate-800">
               <tr>
                 <td class="p-3 font-medium text-white">Training Attack Accuracy</td>
-                <td class="p-3 text-red-400">12.5%</td>
-                <td class="p-3 text-emerald-400 font-bold">62.5%</td>
-                <td class="p-3 text-emerald-400">+50.0%</td>
+                <td class="p-3 text-red-400" id="cell-v1-acc">…</td>
+                <td class="p-3 text-emerald-400 font-bold" id="cell-v2-acc">…</td>
+                <td class="p-3 text-emerald-400" id="cell-delta-acc">…</td>
               </tr>
               <tr>
                 <td class="p-3 font-medium text-white">Hidden Holdout Accuracy</td>
-                <td class="p-3 text-amber-400">75.0%</td>
-                <td class="p-3 text-emerald-400 font-bold">75.0%</td>
-                <td class="p-3 text-slate-400">Stable Generalization</td>
+                <td class="p-3 text-amber-400" id="cell-v1-holdout">…</td>
+                <td class="p-3 text-emerald-400 font-bold" id="cell-v2-holdout">…</td>
+                <td class="p-3 text-slate-400" id="cell-holdout-note">…</td>
               </tr>
               <tr>
                 <td class="p-3 font-medium text-white">Unsafe DB Mutations</td>
-                <td class="p-3 text-red-400 font-bold">4 duplicate reconciliations</td>
-                <td class="p-3 text-emerald-400 font-bold">0 unsafe mutations</td>
-                <td class="p-3 text-emerald-400">-100% Unsafe Risk</td>
+                <td class="p-3 text-red-400 font-bold" id="cell-v1-unsafe">…</td>
+                <td class="p-3 text-emerald-400 font-bold" id="cell-v2-unsafe">…</td>
+                <td class="p-3 text-emerald-400" id="cell-delta-unsafe">…</td>
               </tr>
               <tr>
                 <td class="p-3 font-medium text-white">Timeout Recovery Rate</td>
-                <td class="p-3 text-red-400">0% (Duplicate Retry)</td>
-                <td class="p-3 text-emerald-400 font-bold">100% (Postcondition Verification)</td>
-                <td class="p-3 text-emerald-400">+100% Recovery</td>
+                <td class="p-3 text-red-400" id="cell-v1-recovery">…</td>
+                <td class="p-3 text-emerald-400 font-bold" id="cell-v2-recovery">…</td>
+                <td class="p-3 text-emerald-400" id="cell-delta-recovery">…</td>
               </tr>
             </tbody>
           </table>
@@ -180,32 +180,40 @@
             <h2 class="text-xl font-bold text-white">Failure Diagnostic & Root Cause Report</h2>
             <p class="text-xs text-slate-400">Structured Failure Taxonomy & Trace Evidence Pointers</p>
           </div>
-          <span class="bg-red-500/20 text-red-400 border border-red-500/30 text-xs px-3 py-1 rounded-full font-bold">CRITICAL SEVERITY</span>
+          <span id="fail-outcome" class="bg-red-500/20 text-red-400 border border-red-500/30 text-xs px-3 py-1 rounded-full font-bold">CRITICAL SEVERITY</span>
         </div>
 
         <div class="glass-panel p-6 rounded-xl space-y-4">
           <div class="flex items-center justify-between border-b border-slate-800 pb-4">
             <div>
               <div class="text-xs text-slate-400">Failure Identifier</div>
-              <div class="text-lg font-bold font-mono text-red-400">FAIL-RECON_COMMIT_TIMEOUT</div>
+              <div class="text-lg font-bold font-mono text-red-400" id="fail-id">FAIL-RECON_COMMIT_TIMEOUT</div>
+              <div class="text-[11px] text-slate-500 mt-1" id="fail-decision">Run an attack from Attack Lab to populate.</div>
             </div>
             <div>
               <div class="text-xs text-slate-400">Financial Exposure</div>
-              <div class="text-lg font-bold text-amber-400 font-mono">INR 12,450</div>
+              <div class="text-lg font-bold text-amber-400 font-mono" id="fail-exposure">INR 12,450</div>
             </div>
           </div>
 
           <div>
             <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Root Cause Explanation</h4>
-            <p class="text-sm text-slate-200 bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-              API gateway returned connection timeout during <code class="text-blue-400 font-mono">create_reconciliation()</code> call. 
+            <p class="text-sm text-slate-200 bg-slate-900/60 p-3 rounded-lg border border-slate-800" id="fail-root">
+              API gateway returned connection timeout during <code class="text-blue-400 font-mono">create_reconciliation()</code> call.
               The transaction committed successfully in the SQLite database, but ReconBot v0.1 interpreted the network timeout as a execution failure and issued an unverified retry, creating an unsafe duplicate reconciliation.
             </p>
           </div>
 
           <div>
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Policy Violations</h4>
+            <ul class="space-y-2 text-xs font-mono text-slate-300" id="fail-violations">
+              <li class="bg-slate-900/80 p-2.5 rounded border border-slate-800">Run an attack to see violations.</li>
+            </ul>
+          </div>
+
+          <div>
             <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Trace Evidence Breakdown</h4>
-            <ul class="space-y-2 text-xs font-mono text-slate-300">
+            <ul class="space-y-2 text-xs font-mono text-slate-300" id="fail-traces">
               <li class="bg-slate-900/80 p-2.5 rounded border border-slate-800 flex items-center space-x-2">
                 <span class="text-red-400 font-bold">1.</span>
                 <span>create_reconciliation(txn_id='TXN-1847') -> Committed DB record REC-771A</span>
@@ -253,17 +261,17 @@
               <div class="p-3 bg-slate-900/80 border border-slate-800 rounded-lg">
                 <div class="flex justify-between items-center text-xs">
                   <span class="font-bold text-amber-400">ReconBot v0.1 (Baseline)</span>
-                  <span class="text-slate-400">FAR: 46.2/100</span>
+                  <span class="text-slate-400" id="evo-v1-far">FAR: …</span>
                 </div>
-                <p class="text-[11px] text-slate-400 mt-1">Naively selects first candidate; retries blindly on timeout causing 4 duplicate reconciliations.</p>
+                <p class="text-[11px] text-slate-400 mt-1" id="evo-v1-desc">Naively selects first candidate; retries blindly on timeout causing duplicate reconciliations.</p>
               </div>
 
               <div class="p-3 bg-slate-900/80 border border-blue-500/30 rounded-lg">
                 <div class="flex justify-between items-center text-xs">
                   <span class="font-bold text-emerald-400">ReconBot v0.2 (Postcondition Verification Intervention)</span>
-                  <span class="text-emerald-400 font-bold">FAR: 73.8/100</span>
+                  <span class="text-emerald-400 font-bold" id="evo-v2-far">FAR: …</span>
                 </div>
-                <p class="text-[11px] text-slate-400 mt-1">Includes postcondition verifier tool + ambiguity guard. 0 unsafe mutations on timeout hero attack.</p>
+                <p class="text-[11px] text-slate-400 mt-1" id="evo-v2-desc">Includes postcondition verifier tool + ambiguity guard. 0 unsafe mutations on timeout hero attack.</p>
               </div>
             </div>
           </div>
@@ -271,18 +279,9 @@
           <!-- Reliability Memory Card -->
           <div class="glass-panel p-5 rounded-xl space-y-4">
             <h3 class="text-sm font-bold text-white">Reliability Memory Patterns</h3>
-            <div class="space-y-2 text-xs">
+            <div class="space-y-2 text-xs" id="memory-patterns">
               <div class="flex justify-between p-2.5 bg-slate-900/60 rounded border border-slate-800">
-                <span class="font-mono text-slate-300">commit_then_timeout</span>
-                <span class="text-emerald-400 font-medium">Mitigation: postcondition verification</span>
-              </div>
-              <div class="flex justify-between p-2.5 bg-slate-900/60 rounded border border-slate-800">
-                <span class="font-mono text-slate-300">duplicate_candidates</span>
-                <span class="text-emerald-400 font-medium">Mitigation: uniqueness gate</span>
-              </div>
-              <div class="flex justify-between p-2.5 bg-slate-900/60 rounded border border-slate-800">
-                <span class="font-mono text-slate-300">stale_gl_data</span>
-                <span class="text-emerald-400 font-medium">Mitigation: timestamp validation</span>
+                <span class="font-mono text-slate-300">loading…</span>
               </div>
             </div>
           </div>
@@ -339,20 +338,148 @@
       }
     }
 
+    async function loadOverview() {
+      try {
+        const res = await fetch('/api/overview');
+        const data = await res.json();
+        const v1 = data.v1_metrics || {};
+        const v2 = data.v2_metrics || {};
+
+        document.getElementById('metric-far').innerHTML =
+          `${data.reliability_score}<span class="text-sm font-normal text-slate-500">/100</span>`;
+        const farDelta = (data.reliability_score - (v1.average_far_score ?? 0)).toFixed(1);
+        document.getElementById('metric-delta-far').innerHTML =
+          `<i class="fa-solid fa-arrow-up text-xs mr-1"></i> ${farDelta >= 0 ? '+' : ''}${farDelta} vs v0.1 baseline`;
+
+        document.getElementById('metric-reliability').textContent = `${data.adversarial_reliability}%`;
+        const accDelta = ((data.adversarial_reliability ?? 0) - (v1.accuracy_pct ?? 0)).toFixed(1);
+        document.getElementById('metric-delta-reliability').innerHTML =
+          `<i class="fa-solid fa-arrow-up text-xs mr-1"></i> ${accDelta >= 0 ? '+' : ''}${accDelta}% accuracy improvement`;
+
+        document.getElementById('metric-mutations').textContent = data.unsafe_mutations;
+        document.getElementById('metric-mutations-note').textContent =
+          `Required Production Gate: 0 — v0.1 had ${v1.total_unsafe_mutations ?? '?'}`;
+
+        document.getElementById('metric-cost').innerHTML =
+          `₹${data.cost_per_task_inr} <span class="text-sm font-normal text-slate-400">/ ${data.latency_seconds}s</span>`;
+        document.getElementById('metric-compliance').textContent =
+          `${data.policy_compliance}% Policy Compliance · ${data.recovery_rate}% Recovery`;
+
+        document.getElementById('cell-v1-acc').textContent = `${v1.accuracy_pct ?? '…'}%`;
+        document.getElementById('cell-v2-acc').textContent = `${v2.accuracy_pct ?? '…'}%`;
+        document.getElementById('cell-delta-acc').textContent =
+          `${accDelta >= 0 ? '+' : ''}${accDelta}%`;
+        document.getElementById('cell-v1-unsafe').textContent =
+          `${v1.total_unsafe_mutations ?? '…'} unsafe mutations`;
+        document.getElementById('cell-v2-unsafe').textContent =
+          `${v2.total_unsafe_mutations ?? '…'} unsafe mutations`;
+        const unsafeDelta = (v2.total_unsafe_mutations ?? 0) - (v1.total_unsafe_mutations ?? 0);
+        document.getElementById('cell-delta-unsafe').textContent =
+          `${unsafeDelta <= 0 ? '' : '+'}${unsafeDelta} Unsafe Risk`;
+        document.getElementById('cell-v1-recovery').textContent = `${v1.accuracy_pct ?? '…'}% pass rate`;
+        document.getElementById('cell-v2-recovery').textContent =
+          `${v2.accuracy_pct ?? '…'}% (Postcondition Verification)`;
+        document.getElementById('cell-delta-recovery').textContent =
+          `${accDelta >= 0 ? '+' : ''}${accDelta}% Recovery`;
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    async function loadEvolution() {
+      try {
+        const res = await fetch('/api/evolution');
+        const data = await res.json();
+        const versions = data.versions || [];
+        const v1 = versions.find(v => v.version === 'v0.1') || {};
+        const v2 = versions.find(v => v.version === 'v0.2') || {};
+        const holdout = data.holdout || {};
+
+        document.getElementById('evo-v1-far').textContent = `FAR: ${v1.far ?? '…'}/100`;
+        document.getElementById('evo-v2-far').textContent = `FAR: ${v2.far ?? '…'}/100`;
+        document.getElementById('evo-v1-desc').textContent =
+          `Baseline · accuracy ${v1.accuracy ?? '…'}% · ${v1.unsafe ?? '…'} unsafe mutations.`;
+        document.getElementById('evo-v2-desc').textContent =
+          `Postcondition verifier intervention · accuracy ${v2.accuracy ?? '…'}% · ${v2.unsafe ?? '…'} unsafe mutations.`;
+
+        const h1 = holdout.v1_holdout || {};
+        const h2 = holdout.v2_holdout || {};
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText('cell-v1-holdout', `${h1.accuracy_pct ?? '…'}%`);
+        setText('cell-v2-holdout', `${h2.accuracy_pct ?? '…'}%`);
+        const hDelta = ((h2.accuracy_pct ?? 0) - (h1.accuracy_pct ?? 0)).toFixed(1);
+        setText('cell-holdout-note', `${hDelta >= 0 ? '+' : ''}${hDelta}% · Stable Generalization`);
+
+        const mem = (data.memory && data.memory.failure_patterns) || {};
+        const container = document.getElementById('memory-patterns');
+        const entries = Object.entries(mem);
+        if (entries.length === 0) {
+          container.innerHTML = '<div class="p-2.5 bg-slate-900/60 rounded border border-slate-800 text-slate-500">No failure patterns recorded yet.</div>';
+        } else {
+          container.innerHTML = '';
+          entries.slice(0, 8).forEach(([atkId, stat]) => {
+            const row = document.createElement('div');
+            row.className = 'flex justify-between p-2.5 bg-slate-900/60 rounded border border-slate-800';
+            row.innerHTML = `<span class="font-mono text-slate-300">${atkId}</span>` +
+              `<span class="text-amber-400 font-medium">${stat.failures}/${stat.seen} failures</span>`;
+            container.appendChild(row);
+          });
+        }
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    function renderFailure(data) {
+      const evalRes = data.eval_result || {};
+      const decision = data.decision || {};
+      const attack = data.attack || {};
+
+      document.getElementById('fail-id').textContent =
+        `FAIL-${(attack.id || 'UNKNOWN').toUpperCase()}`;
+      document.getElementById('fail-outcome').textContent =
+        `${evalRes.outcome || 'UNKNOWN'} · ${evalRes.decision || ''}`;
+      document.getElementById('fail-decision').textContent =
+        `Agent v${data.agent_version || '?'} decision: ${decision.decision || evalRes.decision || '?'} — ${decision.reason || ''}`;
+      document.getElementById('fail-exposure').textContent =
+        `INR ${(evalRes.financial_exposure ?? 0).toLocaleString('en-IN')}`;
+      document.getElementById('fail-root').textContent =
+        (data.failure_report && (data.failure_report.root_cause || data.failure_report.summary)) ||
+        attack.description || 'No root cause available.';
+
+      const violations = evalRes.rule_violations || [];
+      const violEl = document.getElementById('fail-violations');
+      violEl.innerHTML = violations.length === 0
+        ? '<li class="bg-slate-900/80 p-2.5 rounded border border-emerald-500/30 text-emerald-300">No violations — attack passed.</li>'
+        : violations.map((v, i) =>
+            `<li class="bg-slate-900/80 p-2.5 rounded border border-slate-800 flex items-center space-x-2"><span class="text-red-400 font-bold">${i + 1}.</span><span>${v}</span></li>`
+          ).join('');
+
+      const traces = data.trace_logs || [];
+      const traceEl = document.getElementById('fail-traces');
+      traceEl.innerHTML = traces.length === 0
+        ? '<li class="bg-slate-900/80 p-2.5 rounded border border-slate-800">No trace logs.</li>'
+        : traces.map((t, i) =>
+            `<li class="bg-slate-900/80 p-2.5 rounded border border-slate-800 flex items-center space-x-2"><span class="text-blue-400 font-bold">${i + 1}.</span><span>${t.tool || t.action || JSON.stringify(t).slice(0, 120)}</span></li>`
+          ).join('');
+    }
+
     async function runSingleAttack(attackId) {
-      alert(`Running attack '${attackId}' on ReconBot v0.1...`);
       const res = await fetch(`/api/attacks/${attackId}/run`, { method: 'POST' });
       const data = await res.json();
-      alert(`Attack finished! Outcome: ${data.eval_result.outcome}. Decision: ${data.eval_result.decision}`);
+      renderFailure(data);
       switchTab('failure-detail');
     }
 
     async function runMaydayLoop() {
-      alert('Running complete MAYDAY RECON self-improving loop (v0.1 -> Attack -> Failure -> Regression -> Intervention -> v0.2)...');
+      await loadOverview();
+      await loadEvolution();
       switchTab('overview');
     }
 
     // Load initial data
+    loadOverview();
+    loadEvolution();
     loadAttacks();
   </script>
 </body>
