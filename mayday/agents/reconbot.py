@@ -21,31 +21,27 @@ import time
 @dataclass
 class AttackDefinition:
     """Represents a single attack definition from the DSL"""
-    name: str
-    description: str
-    type: str
-    severity: str
-    enabled: bool
-    parameters: Dict
-    stage: str
-    method: str
-    target: str
-    detection: Optional[str]
+    name: str = ""
+    description: str = ""
+    type: str = ""
+    severity: str = "medium"
+    enabled: bool = True
+    parameters: Dict = field(default_factory=dict)
+    stage: str = "load"
+    method: str = "default"
+    target: str = "all"
+    detection: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    how_to_apply: Optional[str] = None
+    expected_failure: Optional[str] = None
 
     def validate(self) -> List[str]:
         """Validate attack definition against schema"""
         errors = []
         if not self.name:
             errors.append("name is required")
-        if self.type not in ["transaction_fraud", "GL_mismatch", "data_corruption", "timing_attack", "permission_breach"]:
-            errors.append(f"invalid type: {self.type}")
         if self.severity not in ["low", "medium", "high", "critical"]:
             errors.append(f"invalid severity: {self.severity}")
-        if self.stage not in ["load", "transform", "validate", "match", "report"]:
-            errors.append(f"invalid stage: {self.stage}")
-        if self.method not in ["mutate", "drop", "insert", "delay", "leak", "duplicate", "corrupt"]:
-            errors.append(f"invalid method: {self.method}")
         return errors
 
 

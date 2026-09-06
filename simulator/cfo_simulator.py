@@ -28,6 +28,10 @@ class Transaction:
     account_to: str
     status: str  # pending, completed, failed, disputed
 
+    @property
+    def account_id(self) -> str:
+        return self.account_from
+
     def to_dict(self) -> Dict:
         return {
             "tx_id": self.tx_id,
@@ -124,19 +128,14 @@ class CFOSimulator:
         self,
         count: int = 100,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        **kwargs
     ) -> List[Transaction]:
         """
         Generate realistic transaction data
-
-        Args:
-            count: Number of transactions to generate
-            start_date: Start of date range
-            end_date: End of date range
-
-        Returns:
-            List of transactions
         """
+        if "transaction_count" in kwargs:
+            count = kwargs["transaction_count"]
         if start_date is None:
             start_date = datetime.now() - timedelta(days=30)
 
