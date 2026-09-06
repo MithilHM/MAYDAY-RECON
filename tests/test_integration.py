@@ -162,7 +162,8 @@ class TestAttackScenarios:
 
     def test_transaction_fraud_attack(self):
         """Test transaction fraud attack injection"""
-        bot = ReconBot("mayday/attack.dsl.yml")
+        from mayday.agents.reconbot import ReconBot as DSLReconBot
+        bot = DSLReconBot("mayday/attack.dsl.yml")
 
         if "transaction_fraud" in bot.attacks:
             attack_instance = bot.inject_attack("transaction_fraud")
