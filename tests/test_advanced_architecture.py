@@ -76,3 +76,50 @@ def test_dynamic_execution_graph():
     assert "node_4B" in deg.execution_order
     idx = deg.execution_order.index("node_4")
     assert deg.execution_order[idx + 1] == "node_4B"
+
+
+def test_review_board_and_consensus():
+    from mayday.agents.review_board import RiskCategory, determine_review_path, SupervisorReviewerAgent, ConsensusBoard, verify_hard_invariants
+
+    path_low = determine_review_path({"amount": 500}, 0.98, RiskCategory.LOW)
+    assert path_low == "WORKER_AUTO_COMMIT"
+
+    path_critical = determine_review_path({"amount": 500000}, 0.60, RiskCategory.CRITICAL)
+    assert path_critical == "MULTI_AGENT_UNANIMOUS_CONSENSUS"
+
+    supervisor = SupervisorReviewerAgent()
+    eval_res = supervisor.evaluate_escalation({"id": "TXN-101", "amount": 150000.0}, {"ambiguous": False}, [])
+    assert eval_res["verdict"] == "APPROVED_BY_SUPERVISOR"
+
+    board = ConsensusBoard()
+    candidate = {
+        "intervention_id": "INT-001",
+        "target_attack": "recon_commit_timeout",
+        "patch_payload": {"rule": "verify_postcondition"},
+        "empirical_validation": {"holdout_pass_rate": 1.0}
+    }
+    vote_res = board.vote_on_intervention(candidate)
+    assert vote_res["approved"] is True
+    assert vote_res["consensus_type"] == "UNANIMOUS"
+
+    # Verify hard invariants
+    assert verify_hard_invariants({}, {"reconciliations": [{"bank_transaction_id": "BT1"}, {"bank_transaction_id": "BT2"}]}) is True
+    assert verify_hard_invariants({}, {"reconciliations": [{"bank_transaction_id": "BT1"}, {"bank_transaction_id": "BT1"}]}) is False
+
+
+def test_pipeline_request_spec():
+    from mayday.optimization.dataflow_pipeline import PipelineRequestSpec, DataflowOptimizationPipeline
+
+    pipeline = DataflowOptimizationPipeline()
+    spec = PipelineRequestSpec(
+        request_id="REQ-001",
+        session_id="SESS-001",
+        agent_role="ReconBot",
+        financial_context={"amount": 450.0, "is_ambiguous": False},
+        raw_prompt_messages=[{"role": "user", "content": "Reconcile transaction TXN-101", "null_val": None}]
+    )
+    telemetry = pipeline.process_request(spec)
+    assert telemetry.request_id == "REQ-001"
+    assert telemetry.selected_tier is not None
+    assert telemetry.net_savings_percent >= 0.0
+

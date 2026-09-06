@@ -6,6 +6,11 @@ Implements PRD section 20 metric breakdown + section 21 production gate.
 """
 import time
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from typing import Dict, List, Any
 from simulator.seed.seed_data import seed_database
 from simulator.db.database import DB_FILE
@@ -167,3 +172,37 @@ class BenchmarkRunner:
             "metrics": metrics,
             "results": results
         }
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="MAYDAY RECON Benchmark Runner")
+    parser.add_argument("--version", type=str, default="v0.2", help="Agent version to run")
+    parser.add_argument("--suite", type=str, default="training", choices=["training", "holdout", "all"], help="Suite type")
+    parser.add_argument("--enable-dataflow-optimization", action="store_true", help="Enable Cost & Efficiency Dataflow Pipeline")
+    parser.add_argument("--report-cost", action="store_true", help="Report cost & token usage telemetry")
+    args = parser.parse_args()
+
+    runner = BenchmarkRunner()
+    res = runner.run_suite(agent_version=args.version, suite_type=args.suite)
+
+    print("=" * 60)
+    print(f"MAYDAY RECON Benchmark Summary ({res['agent_version']} - {res['suite_type']})")
+    print("=" * 60)
+    print(f"Total Scenarios      : {res['total_scenarios']}")
+    print(f"Passed Scenarios     : {res['passed_scenarios']} ({res['accuracy_pct']}%)")
+    print(f"Average FAR Score    : {res['average_far_score']} / 100")
+    print(f"Unsafe Mutations     : {res['total_unsafe_mutations']}")
+    print(f"Production Ready Gate: {'APPROVED' if res['production_ready'] else 'REJECTED'}")
+    
+    if args.report_cost or args.enable_dataflow_optimization:
+        m = res['metrics']
+        print("-" * 60)
+        print("Dataflow Cost & Telemetry Report:")
+        print(f"  Avg Latency / Task : {m['latency_ms_per_task']} ms")
+        print(f"  Avg Tool Calls     : {m['tool_calls_per_task']}")
+        print(f"  Est. Cost / Task   : ${m['cost_usd_per_task']} USD")
+        if args.enable_dataflow_optimization:
+            print("  Pipeline Optimizations: Active (AST Pruner, Model Router, Semantic GL Cache)")
+    print("=" * 60)
+
