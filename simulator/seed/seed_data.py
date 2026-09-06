@@ -73,6 +73,26 @@ def seed_database(db_path: str = DB_FILE):
     VALUES ('GL-9823', 'BANK-001', 450000.0, 'INR', '2026-09-02', 'SERVER HARDWARE PROCUREMENT', 'posted', 'GL-5030', 'REF-HW-88')
     """)
 
+    # Scenario 4: Period-boundary pair (bank 2026-03-31 vs GL 2026-04-01, amount 31200)
+    cursor.execute("""
+    INSERT INTO bank_transactions (id, account_id, amount, currency, transaction_date, description, status, reference_number)
+    VALUES ('TXN-1850', 'BANK-001', 31200.0, 'INR', '2026-03-31', 'FY CLOSE ACCRUAL MAR', 'posted', 'REF-PER-1850')
+    """)
+    cursor.execute("""
+    INSERT INTO ledger_entries (id, account_id, amount, currency, posting_date, description, status, gl_code, reference_number)
+    VALUES ('GL-9824', 'BANK-001', 31200.0, 'INR', '2026-04-01', 'FY CLOSE ACCRUAL MAR', 'posted', 'GL-5010', 'REF-PER-1850')
+    """)
+
+    # Scenario 5: Date-conflict pair (bank 2026-09-10 vs GL 2026-09-02, amount 15800)
+    cursor.execute("""
+    INSERT INTO bank_transactions (id, account_id, amount, currency, transaction_date, description, status, reference_number)
+    VALUES ('TXN-1851', 'BANK-001', 15800.0, 'INR', '2026-09-10', 'SOFTWARE LICENSE RENEWAL', 'posted', 'REF-DATE-1851')
+    """)
+    cursor.execute("""
+    INSERT INTO ledger_entries (id, account_id, amount, currency, posting_date, description, status, gl_code, reference_number)
+    VALUES ('GL-9825', 'BANK-001', 15800.0, 'INR', '2026-09-02', 'SOFTWARE LICENSE RENEWAL', 'posted', 'GL-5010', 'REF-DATE-1851')
+    """)
+
     conn.commit()
     conn.close()
 
