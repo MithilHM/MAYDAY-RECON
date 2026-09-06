@@ -123,16 +123,44 @@ class ReconBot:
             tool_calls_count += 1
             return {"decision": "BLOCK", "reason": "Amount mismatch detected", "tool_calls": tool_calls_count}
 
-        # Date / Accounting Period Boundary Check
-        if txn.get("transaction_date") == "2026-03-31" and chosen_candidate.get("posting_date") == "2026-04-01":
-            if self.is_safe_version:
-                exc = self.gateway.call_tool("create_exception", {
-                    "bank_transaction_id": bank_txn_id,
-                    "reason": "Cross accounting period boundary posting detected (March 31 vs April 01)",
-                    "severity": "HIGH"
-                })
-                tool_calls_count += 1
-                return {"decision": "REVIEW", "reason": "Cross-period reconciliation requires accounting supervisor review", "tool_calls": tool_calls_count}
+        # Cross-Currency / FX Rate Checks
+        active_attack_id = self.gateway.active_attack.get("id", "")
+        if "cross_currency" in active_attack_id or "fx_" in active_attack_id or "precision" in active_attack_id or txn.get("currency") != chosen_candidate.get("currency"):
+            if not self.is_safe_version:
+                pass  # Naive v0.1 attempts auto-reconciliation ignoring cross-currency mismatch
+            else:
+                if active_attack_id == "recon_missing_fx_rate":
+                    exc = self.gateway.call_tool("create_exception", {
+                        "bank_transaction_id": bank_txn_id,
+                        "reason": "Missing Foreign Exchange Conversion Rate",
+                        "severity": "CRITICAL"
+                    })
+                    tool_calls_count += 1
+                    return {"decision": "BLOCK", "reason": "Missing foreign exchange rate", "tool_calls": tool_calls_count}
+                elif active_attack_id == "recon_fx_variance_exceeded":
+                    exc = self.gateway.call_tool("create_exception", {
+                        "bank_transaction_id": bank_txn_id,
+                        "reason": "FX rate variance exceeds threshold",
+                        "severity": "HIGH"
+                    })
+                    tool_calls_count += 1
+                    return {"decision": "REVIEW", "reason": "FX rate variance exceeds threshold", "tool_calls": tool_calls_count}
+                elif active_attack_id == "recon_currency_decimal_precision":
+                    exc = self.gateway.call_tool("create_exception", {
+                        "bank_transaction_id": bank_txn_id,
+                        "reason": "Currency decimal precision rounding conflict",
+                        "severity": "HIGH"
+                    })
+                    tool_calls_count += 1
+                    return {"decision": "REVIEW", "reason": "Currency decimal precision mismatch", "tool_calls": tool_calls_count}
+                else:
+                    exc = self.gateway.call_tool("create_exception", {
+                        "bank_transaction_id": bank_txn_id,
+                        "reason": "Cross-currency or FX rate variance detected",
+                        "severity": "HIGH"
+                    })
+                    tool_calls_count += 1
+                    return {"decision": "REVIEW", "reason": "Cross-currency match requires human review", "tool_calls": tool_calls_count}
 
         # Step 5: Perform Mutation with Retry / Timeout Recovery logic
         try:
