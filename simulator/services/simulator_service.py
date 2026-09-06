@@ -64,31 +64,51 @@ class CFOSimulatorService:
 
     def create_reconciliation(self, bank_transaction_id: str, ledger_entry_id: str, amount: float, reconciled_by: str = "ReconBot") -> Dict[str, Any]:
         conn = get_connection(self.db_path)
-        cursor = conn.cursor()
-        
-        # Check if already reconciled
-        cursor.execute("SELECT * FROM reconciliations WHERE bank_transaction_id = ?", (bank_transaction_id,))
-        existing = cursor.fetchone()
-        if existing:
+        try:
+            # Atomic check-then-insert: exclusive write lock for the duration.
+            # `with conn:` ensures commit/rollback semantics; BEGIN IMMEDIATE
+            # takes the RESERVED lock up-front to prevent lost-update races.
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.cursor()
+
+                # Check if already reconciled
+                cursor.execute("SELECT * FROM reconciliations WHERE bank_transaction_id = ?", (bank_transaction_id,))
+                existing = cursor.fetchone()
+                if existing:
+                    # Roll back the explicit BEGIN before raising so no
+                    # RESERVED lock is left held.
+                    conn.rollback()
+                    raise ValueError(f"Transaction {bank_transaction_id} is already reconciled!")
+
+                rec_id = f"REC-{uuid.uuid4().hex[:8].upper()}"
+                created_at = datetime.now().isoformat()
+
+                cursor.execute("""
+                INSERT INTO reconciliations (id, bank_transaction_id, ledger_entry_id, amount, status, created_at, reconciled_by)
+                VALUES (?, ?, ?, ?, 'matched', ?, ?)
+                """, (rec_id, bank_transaction_id, ledger_entry_id, amount, created_at, reconciled_by))
+
+                cursor.execute("""
+                INSERT INTO reconciliation_items (id, reconciliation_id, transaction_id, item_type)
+                VALUES (?, ?, ?, 'bank_transaction')
+                """, (f"ITEM-1-{rec_id}", rec_id, bank_transaction_id))
+
+                cursor.execute("""
+                INSERT INTO reconciliation_items (id, reconciliation_id, transaction_id, item_type)
+                VALUES (?, ?, ?, 'ledger_entry')
+                """, (f"ITEM-2-{rec_id}", rec_id, ledger_entry_id))
+
+                conn.commit()
+                return {"id": rec_id, "bank_transaction_id": bank_transaction_id, "ledger_entry_id": ledger_entry_id, "status": "matched"}
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
             conn.close()
-            raise ValueError(f"Transaction {bank_transaction_id} is already reconciled!")
-
-        rec_id = f"REC-{uuid.uuid4().hex[:8].upper()}"
-        created_at = datetime.now().isoformat()
-        
-        cursor.execute("""
-        INSERT INTO reconciliations (id, bank_transaction_id, ledger_entry_id, amount, status, created_at, reconciled_by)
-        VALUES (?, ?, ?, ?, 'matched', ?, ?)
-        """, (rec_id, bank_transaction_id, ledger_entry_id, amount, created_at, reconciled_by))
-
-        cursor.execute("""
-        INSERT INTO reconciliation_items (id, reconciliation_id, transaction_id, item_type)
-        VALUES (?, ?, ?, 'bank_transaction'), (?, ?, ?, 'ledger_entry')
-        """, (f"ITEM-1-{rec_id}", rec_id, bank_transaction_id, f"ITEM-2-{rec_id}", rec_id, ledger_entry_id))
-
-        conn.commit()
-        conn.close()
-        return {"id": rec_id, "bank_transaction_id": bank_transaction_id, "ledger_entry_id": ledger_entry_id, "status": "matched"}
 
     def create_exception(self, bank_transaction_id: str, reason: str, severity: str = "HIGH", candidates_found: int = 0, notes: Optional[str] = None) -> Dict[str, Any]:
         conn = get_connection(self.db_path)

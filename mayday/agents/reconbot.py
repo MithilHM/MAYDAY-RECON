@@ -7,8 +7,10 @@ The ReconBot is the primary orchestration agent that:
 3. Monitors for attack detection and reporting
 4. Manages reconciliation session lifecycle
 """
+# mayday.agents.reconbot.ReconBot = AttackOrchestrator (DSL loader), distinct from agent.reconbot.ReconBot (finance worker)
 
 import json
+import os
 import yaml
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -305,8 +307,17 @@ class ReconBot:
 
             return instance.to_dict()
 
-    def _simulate_detection(self, instance: AttackInstance) -> bool:
-        """Simulate detection of attack based on type and parameters"""
+    def _simulate_detection(self, instance: AttackInstance, seed: int | None = None) -> bool:
+        """Simulate detection of attack based on type and parameters.
+
+        Args:
+            instance: Active attack instance.
+            seed: Optional explicit seed for deterministic draws. When None
+                and ``DETERMINISTIC=1`` is set in the environment, a stable
+                pseudo-random value is derived from ``instance.id`` via
+                ``hashlib.md5`` so repeated runs agree. Otherwise falls back
+                to the legacy non-deterministic ``random`` path.
+        """
         attack = instance.definition
 
         # Higher severity attacks have higher detection probability
@@ -317,6 +328,15 @@ class ReconBot:
         # Detection is more likely if no specific detection method defined
         if not attack.detection:
             detection_prob *= 0.8
+
+        if seed is not None:
+            import random
+            return random.Random(seed).random() < detection_prob
+
+        if os.getenv("DETERMINISTIC") == "1":
+            digest = hashlib.md5(instance.id.encode()).digest()
+            deterministic_value = int.from_bytes(digest[:8], "big") / 2**64
+            return deterministic_value < detection_prob
 
         import random
         return random.random() < detection_prob

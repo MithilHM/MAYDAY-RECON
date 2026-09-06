@@ -5,11 +5,15 @@ services:
       dockerfile: apps/api/Dockerfile
     ports:
       - "8000:8000"
+    # Production: no bind mount; image contains code.
+    # Dev override only (docker-compose.override.yml or uncomment below):
+    # volumes:
+    #   - .:/app
     volumes:
-      - .:/app
+      - api_data:/data
     environment:
-      - ENVIRONMENT=development
-      - DEBUG=true
+      - ENVIRONMENT=production
+      - DEBUG=false
     restart: unless-stopped
 
   web:
@@ -24,3 +28,6 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+volumes:
+  api_data:

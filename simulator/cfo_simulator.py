@@ -17,6 +17,16 @@ from dataclasses import dataclass
 import json
 
 
+def seed_all(seed: int) -> None:
+    """Seed the global random module for deterministic runs.
+
+    Note: ``CFOSimulator`` uses its own ``self._rng`` instance when a
+    ``seed`` is passed to ``__init__``. This helper seeds the process-wide
+    ``random`` module for any legacy module-level ``random.*`` usage.
+    """
+    random.seed(seed)
+
+
 @dataclass
 class Transaction:
     """Represents a financial transaction"""
@@ -109,8 +119,10 @@ class CFOSimulator:
     Generates realistic financial data for attack testing
     """
 
-    def __init__(self, bank_name: str = "SimBank"):
+    def __init__(self, bank_name: str = "SimBank", seed: int | None = None):
         self.bank_name = bank_name
+        self.seed = seed
+        self._rng = random.Random(seed)
         self.transaction_types = [
             "Wire Transfer", "ACH Transaction", "Check Payment",
             "Electronic Deposit", "Bank Draft", "Overdraft Protection",
@@ -146,28 +158,28 @@ class CFOSimulator:
 
         for i in range(count):
             timestamp = start_date + timedelta(
-                days=random.randint(0, (end_date - start_date).days),
-                seconds=random.randint(0, 86400)
+                days=self._rng.randint(0, (end_date - start_date).days),
+                seconds=self._rng.randint(0, 86400)
             )
 
-            tx_type = random.choice(self.transaction_types)
+            tx_type = self._rng.choice(self.transaction_types)
 
             # Vary transaction amounts based on type
             if "Transfer" in tx_type:
-                amount = random.uniform(1000.0, 50000.0)
+                amount = self._rng.uniform(1000.0, 50000.0)
             elif "ACH" in tx_type or "Deposit" in tx_type:
-                amount = random.uniform(100.0, 5000.0)
+                amount = self._rng.uniform(100.0, 5000.0)
             elif "Check" in tx_type or "Payment" in tx_type:
-                amount = random.uniform(500.0, 25000.0)
+                amount = self._rng.uniform(500.0, 25000.0)
             elif "Fee" in tx_type:
-                amount = random.uniform(5.0, 500.0)
+                amount = self._rng.uniform(5.0, 500.0)
             else:
-                amount = random.uniform(100.0, 20000.0)
+                amount = self._rng.uniform(100.0, 20000.0)
 
             # Status with varying probabilities
-            if random.random() < 0.02:
+            if self._rng.random() < 0.02:
                 status = "disputed"
-            elif random.random() < 0.95:
+            elif self._rng.random() < 0.95:
                 status = "completed"
             else:
                 status = "failed"
@@ -177,9 +189,9 @@ class CFOSimulator:
                 tx_id=tx_id,
                 amount=round(amount, 2),
                 timestamp=timestamp,
-                description=f"{tx_type} - {random.choice(['Payment', 'Invoice #', 'Transfer to'])} {random.randint(1000, 9999)}",
-                account_from=random.choice(self.accounts),
-                account_to=random.choice(self.accounts),
+                description=f"{tx_type} - {self._rng.choice(['Payment', 'Invoice #', 'Transfer to'])} {self._rng.randint(1000, 9999)}",
+                account_from=self._rng.choice(self.accounts),
+                account_to=self._rng.choice(self.accounts),
                 status=status
             )
 
@@ -205,7 +217,7 @@ class CFOSimulator:
             BankStatement object
         """
         if transactions is None:
-            transactions = self.generate_transactions(count=random.randint(80, 150))
+            transactions = self.generate_transactions(count=self._rng.randint(80, 150))
 
         statement_id = self._generate_id("STMT", int(statement_date.timestamp()))
 
@@ -214,7 +226,7 @@ class CFOSimulator:
 
         # Generate realistic closing balance
         if closing_balance is None:
-            balance_start = random.uniform(100000.0, 500000.0)
+            balance_start = self._rng.uniform(100000.0, 500000.0)
             balance_start = round(balance_start, 2)
 
             balance_start, balance_end = self._calculate_balance_series(transactions)
@@ -256,7 +268,7 @@ class CFOSimulator:
             debit_credit = "DEBIT" if tx.account_from == "system" else "CREDIT"
             account = tx.account_to if debit_credit == "CREDIT" else tx.account_from
 
-            entry_id = self._generate_id("LEDG", random.randint(10000, 99999))
+            entry_id = self._generate_id("LEDG", self._rng.randint(10000, 99999))
             entry = LedgerEntry(
                 entry_id=entry_id,
                 tx_id=tx.tx_id,
@@ -356,7 +368,7 @@ class CFOSimulator:
         elif attack_type == "data_corruption":
             # Corrupt transaction amount
             if bank_stmt.transactions:
-                random_tx = random.choice(bank_stmt.transactions)
+                random_tx = self._rng.choice(bank_stmt.transactions)
                 random_tx.amount *= 1.5  # Corrupt by 50%
                 bank_stmt.transactions[-1] = random_tx
 
@@ -386,13 +398,13 @@ class CFOSimulator:
 
         min_amt, max_amt = map(float, amount_range.split('..'))
 
-        amount = random.uniform(min_amt, max_amt)
+        amount = self._rng.uniform(min_amt, max_amt)
         amount = round(amount, 2)
 
         return Transaction(
-            tx_id=self._generate_id("FRAUD", random.randint(1000, 9999)),
+            tx_id=self._generate_id("FRAUD", self._rng.randint(1000, 9999)),
             amount=amount,
-            timestamp=datetime.now() - timedelta(days=random.randint(1, 30)),
+            timestamp=datetime.now() - timedelta(days=self._rng.randint(1, 30)),
             description="Fraudulent Transaction (Attack)",
             account_from="external_beneficiary",
             account_to="Primary Operating Account",
@@ -402,13 +414,13 @@ class CFOSimulator:
     def _create_mismatched_ledger_entry(self) -> LedgerEntry:
         """Create a ledger entry that doesn't match any transaction"""
         return LedgerEntry(
-            entry_id=self._generate_id("LEDG", random.randint(10000, 99999)),
+            entry_id=self._generate_id("LEDG", self._rng.randint(10000, 99999)),
             tx_id="NO_MATCH_TRANSACTION",
-            amount=round(random.uniform(1000.0, 10000.0), 2),
-            debit_credit=random.choice(["DEBIT", "CREDIT"]),
-            account=random.choice(self.accounts),
-            transaction_date=datetime.now() - timedelta(days=random.randint(1, 30)),
-            posted_date=datetime.now() - timedelta(days=random.randint(1, 30))
+            amount=round(self._rng.uniform(1000.0, 10000.0), 2),
+            debit_credit=self._rng.choice(["DEBIT", "CREDIT"]),
+            account=self._rng.choice(self.accounts),
+            transaction_date=datetime.now() - timedelta(days=self._rng.randint(1, 30)),
+            posted_date=datetime.now() - timedelta(days=self._rng.randint(1, 30))
         )
 
     def _apply_ledger_entry(self, bank_stmt: BankStatement, ledger: LedgerEntry):

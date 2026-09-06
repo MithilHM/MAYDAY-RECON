@@ -39,3 +39,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# MAYDAY-RECON hygiene - local artifacts (do not commit)
+*.db-journal
+*.sqlite
+*.db-shm
+*.db-wal
+benchmark_report.json
+benchmark_report*.json
+test_tmp.db

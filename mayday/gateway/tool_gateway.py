@@ -10,6 +10,9 @@ from simulator.services.simulator_service import CFOSimulatorService
 from simulator.db.database import dump_state, DB_FILE
 
 class ToolGateway:
+    # Tools that mutate DB state and therefore warrant a full state_after snapshot.
+    MUTATING_TOOLS = frozenset({"create_reconciliation", "create_exception", "write_audit_event"})
+
     def __init__(self, db_path: str = DB_FILE, active_attack: Optional[Dict[str, Any]] = None):
         self.simulator = CFOSimulatorService(db_path)
         self.db_path = db_path
@@ -42,7 +45,26 @@ class ToolGateway:
         except Exception:
             pass
 
-    def call_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def light_snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Fast lightweight snapshot (reconciliations/exceptions/audit_events only)."""
+        return dump_state(self.db_path, full=False)
+
+    def _needs_full_after(self, tool_name: str) -> bool:
+        """Full state_after only for mutating tools or active tool_behavior attacks."""
+        if tool_name in self.MUTATING_TOOLS:
+            return True
+        if self.active_attack.get("setup", {}).get("tool_behavior"):
+            return True
+        return False
+
+    def _snapshot_after(self, tool_name: str, include_state: bool) -> Dict[str, List[Dict[str, Any]]]:
+        if not include_state:
+            return {}
+        if self._needs_full_after(tool_name):
+            return dump_state(self.db_path, full=True)
+        return self.light_snapshot()
+
+    def call_tool(self, tool_name: str, args: Dict[str, Any], include_state: bool = True) -> Dict[str, Any]:
         # Lazy pre-reconcile: ensure already-reconciled state exists before reads.
         if self.active_attack.get("setup", {}).get("pre_reconcile") and tool_name in (
             "get_reconciliation_status",
@@ -52,7 +74,7 @@ class ToolGateway:
         ):
             self._ensure_pre_reconcile()
         start_time = time.time()
-        state_before = dump_state(self.db_path)
+        state_before = self.light_snapshot() if include_state else {}
         error_message = None
         result = None
         intercepted = False
@@ -71,7 +93,7 @@ class ToolGateway:
             
             # Now simulate API timeout error returned to ReconBot!
             duration_ms = (time.time() - start_time) * 1000
-            state_after = dump_state(self.db_path)
+            state_after = self._snapshot_after(tool_name, include_state)
             
             call_record = {
                 "tool": tool_name,
@@ -91,7 +113,7 @@ class ToolGateway:
         if tool_behavior.get("tool") == tool_name and tool_behavior.get("behavior") == "fail_audit":
             intercepted = True
             duration_ms = (time.time() - start_time) * 1000
-            state_after = dump_state(self.db_path)
+            state_after = self._snapshot_after(tool_name, include_state)
             call_record = {
                 "tool": tool_name,
                 "args": args,
@@ -234,7 +256,7 @@ class ToolGateway:
                 raise e
 
         duration_ms = (time.time() - start_time) * 1000
-        state_after = dump_state(self.db_path)
+        state_after = self._snapshot_after(tool_name, include_state)
 
         call_record = {
             "tool": tool_name,

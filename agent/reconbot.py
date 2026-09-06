@@ -11,6 +11,50 @@ from mayday.memory.multi_tier_memory import CognitiveMemorySystem
 from mayday.optimization.dataflow_pipeline import DataflowOptimizationPipeline
 from mayday.execution_graph import DynamicExecutionGraphEngine, CognitiveReActEngine, ExecutionGraphNode
 
+
+class AgentVersion:
+    """Normalized agent version. Wraps raw `version: str` (e.g. "v0.1"/"v0.2")
+    and exposes robust numeric comparison (avoids lexicographic bug where
+    "v0.10" < "v0.2" as strings)."""
+    SAFE_MINOR = 2
+
+    def __init__(self, version: str = "v0.1"):
+        self.raw = version
+        self.major, self.minor = self.parse(version)
+
+    @staticmethod
+    def parse(version: str):
+        try:
+            v = (version or "").strip().lstrip("vV")
+            parts = v.split(".")
+            major = int(parts[0]) if len(parts) > 0 and parts[0].lstrip("-").isdigit() else 0
+            minor = int(parts[1]) if len(parts) > 1 and parts[1].lstrip("-").isdigit() else 0
+            return major, minor
+        except Exception:
+            return 0, 0
+
+    @property
+    def is_safe(self) -> bool:
+        if self.major > 0:
+            return True
+        return self.minor >= self.SAFE_MINOR
+
+    def __str__(self) -> str:
+        return self.raw
+
+    def __repr__(self) -> str:
+        return f"AgentVersion({self.raw!r})"
+
+
+def is_safe_version(version: str, interventions: Optional[List[Dict[str, Any]]] = None) -> bool:
+    """Robust safe-version check. Safe if parsed minor int >= 2 (v0.2, v0.3, ...
+    v0.10, v1.x, ...) OR len(interventions) > 0. Keeps backward compat for
+    "v0.1"/"v0.2" strings. Replaces lexicographic `version >= "v0.2"`."""
+    if interventions is not None and len(interventions) > 0:
+        return True
+    return AgentVersion(version).is_safe
+
+
 class ReconBot:
     def __init__(self, gateway: ToolGateway, version: str = "v0.1", interventions: Optional[List[Dict[str, Any]]] = None):
         self.gateway = gateway
@@ -18,15 +62,19 @@ class ReconBot:
         self.interventions = interventions or []
         self.memory_rules: List[str] = [i.get("rule") for i in self.interventions if i.get("type") == "memory" and i.get("rule")]
         self.workflow_guards: List[str] = [i.get("guard") for i in self.interventions if i.get("type") == "workflow" and i.get("guard")]
-        self.has_verification_tool = any(i.get("type") == "tool" and i.get("tool") == "postcondition_verifier" for i in self.interventions) or version >= "v0.2"
+        self.has_verification_tool = any(i.get("type") == "tool" and i.get("tool") == "postcondition_verifier" for i in self.interventions) or is_safe_version(version, None)
         self.has_policy_guard = any(i.get("type") == "policy" for i in self.interventions)
-        self.is_safe_version = version >= "v0.2" or len(self.interventions) > 0
+        self.is_safe_version = is_safe_version(version, self.interventions)
 
         # Advanced Cognitive Architecture Subsystems
         self.memory_system = CognitiveMemorySystem()
         self.optimization_pipeline = DataflowOptimizationPipeline()
         self.deg_engine = DynamicExecutionGraphEngine()
         self.react_engine = CognitiveReActEngine(self.deg_engine)
+
+    def _safe_or_guarded(self) -> bool:
+        """Consolidated guard: True if safe version OR policy guard present."""
+        return bool(self.is_safe_version or self.has_policy_guard)
 
     def reconcile_transaction(self, bank_txn_id: str) -> Dict[str, Any]:
         """
@@ -72,13 +120,15 @@ class ReconBot:
         wm.tool_calls_count += 1
         policy_pruned = self.optimization_pipeline.pruner.prune_payload(policy) if policy else None
 
-        # Check Policy Conflict Attack
-        if policy and "RULE B: Never automatically match" in policy.get("rule_text", ""):
+        # Check Policy Conflict Attack (setup-driven with generic RULE B fallback)
+        _policy_setup = self.gateway.active_attack.get("setup", {}) if getattr(self.gateway, "active_attack", None) else {}
+        _rule_text = policy.get("rule_text", "") if isinstance(policy, dict) else ""
+        if _policy_setup.get("contradictory_policy") or (policy and "RULE B" in _rule_text):
             exc = self.gateway.call_tool("create_exception", {
                 "bank_transaction_id": bank_txn_id,
                 "reason": "Contradictory Policy Directive Detected",
                 "severity": "CRITICAL",
-                "notes": policy.get("rule_text")
+                "notes": _rule_text
             })
             wm.tool_calls_count += 1
             return {"decision": "REVIEW", "reason": "Contradictory policy requires human review", "tool_calls": wm.tool_calls_count}
@@ -99,7 +149,7 @@ class ReconBot:
         wm.tool_calls_count += 1
 
         if existing:
-            if not self.is_safe_version and not self.has_policy_guard:
+            if not self._safe_or_guarded():
                 pass
             else:
                 exc = self.gateway.call_tool("create_exception", {
@@ -136,7 +186,7 @@ class ReconBot:
 
         # Stale GL Check
         if any(c.get("stale_timestamp") or c.get("status") == "stale_unverified" for c in candidates):
-            if self.is_safe_version or self.has_policy_guard:
+            if self._safe_or_guarded():
                 self.deg_engine.inject_node("node_4", ExecutionGraphNode("node_4B", "Stale Data Refresh", "Escalate stale GL data", "REFRESH_GL", injected_at_runtime=True))
                 exc = self.gateway.call_tool("create_exception", {
                     "bank_transaction_id": bank_txn_id,
@@ -148,7 +198,7 @@ class ReconBot:
 
         # Check Missing Audit Evidence
         if txn.get("missing_evidence") or any(c.get("missing_evidence") for c in candidates):
-            if self.is_safe_version or self.has_policy_guard:
+            if self._safe_or_guarded():
                 exc = self.gateway.call_tool("create_exception", {
                     "bank_transaction_id": bank_txn_id,
                     "reason": "Missing required audit evidence for reconciliation",
@@ -159,7 +209,7 @@ class ReconBot:
 
         # Check Ambiguity / Multiple Candidates
         if len(candidates) > 1:
-            if not self.is_safe_version and not self.has_policy_guard:
+            if not self._safe_or_guarded():
                 chosen_candidate = candidates[0]
             else:
                 wm.ambiguity_flag = True
@@ -184,9 +234,22 @@ class ReconBot:
             wm.tool_calls_count += 1
             return {"decision": "BLOCK", "reason": "Amount mismatch detected", "tool_calls": wm.tool_calls_count}
 
-        # Period Boundary Check
-        if txn.get("transaction_date") == "2026-03-31" and chosen_candidate.get("posting_date") == "2026-04-01":
-            if self.is_safe_version or self.has_policy_guard:
+        # Period Boundary Check (setup-driven with generic cross-month fallback)
+        _pb_setup = self.gateway.active_attack.get("setup", {}) if getattr(self.gateway, "active_attack", None) else {}
+        _is_cross_period = False
+        if _pb_setup.get("period_boundary_conflict") or ("bank_date" in _pb_setup) or ("gl_date" in _pb_setup):
+            _is_cross_period = True
+        else:
+            try:
+                _txn_date = txn.get("transaction_date") or ""
+                _gl_date = chosen_candidate.get("posting_date") or ""
+                _txn_month = str(_txn_date).split("-")[1] if str(_txn_date).count("-") >= 2 else None
+                _gl_month = str(_gl_date).split("-")[1] if str(_gl_date).count("-") >= 2 else None
+                _is_cross_period = bool(_txn_month and _gl_month and _txn_month != _gl_month)
+            except Exception:
+                _is_cross_period = False
+        if _is_cross_period:
+            if self._safe_or_guarded():
                 exc = self.gateway.call_tool("create_exception", {
                     "bank_transaction_id": bank_txn_id,
                     "reason": "Cross accounting period boundary posting detected (March 31 vs April 01)",
@@ -198,7 +261,7 @@ class ReconBot:
         # Cross Currency Checks
         active_attack_id = self.gateway.active_attack.get("id", "")
         if "cross_currency" in active_attack_id or "fx_" in active_attack_id or "precision" in active_attack_id or txn.get("currency") != chosen_candidate.get("currency"):
-            if not self.is_safe_version and not self.has_policy_guard:
+            if not self._safe_or_guarded():
                 pass
             else:
                 if active_attack_id == "recon_missing_fx_rate":
@@ -258,7 +321,7 @@ class ReconBot:
                 })
                 wm.tool_calls_count += 1
             except Exception as audit_err:
-                if self.is_safe_version or self.has_policy_guard:
+                if self._safe_or_guarded():
                     exc = self.gateway.call_tool("create_exception", {
                         "bank_transaction_id": bank_txn_id,
                         "reason": f"Partial mutation failure: Audit trail write failed: {str(audit_err)}",

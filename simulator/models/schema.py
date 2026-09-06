@@ -1,17 +1,30 @@
 """
 Pydantic schemas and dataclasses for CFO Finance Simulator.
+
+Monetary convention: all `amount` / money fields are INR floats rounded to
+2 decimals (paise precision). Use `to_paise(amount)` when exact integer
+paise arithmetic is needed.
 """
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
+
+def to_paise(amount: float) -> int:
+    """Convert an INR float amount to integer paise (paise-rounding helper)."""
+    return int(round(float(amount) * 100))
+
 class Company(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     name: str
     currency: str = "INR"
     fiscal_year_start_month: int = 4
 
 class Account(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     company_id: str
     account_number: str
@@ -19,6 +32,8 @@ class Account(BaseModel):
     account_type: str  # Bank, Expense, Revenue, Asset, Liability
 
 class BankTransaction(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     account_id: str
     amount: float
@@ -29,6 +44,8 @@ class BankTransaction(BaseModel):
     reference_number: Optional[str] = None
 
 class LedgerEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     account_id: str
     amount: float
@@ -41,6 +58,8 @@ class LedgerEntry(BaseModel):
     stale_timestamp: Optional[str] = None
 
 class Reconciliation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     bank_transaction_id: str
     ledger_entry_id: str
@@ -50,12 +69,16 @@ class Reconciliation(BaseModel):
     reconciled_by: str = "ReconBot"
 
 class ReconciliationItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     reconciliation_id: str
     transaction_id: str
     item_type: str  # bank_transaction or ledger_entry
 
 class ExceptionRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     bank_transaction_id: str
     reason: str
@@ -66,6 +89,8 @@ class ExceptionRecord(BaseModel):
     notes: Optional[str] = None
 
 class AccountingPolicy(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     policy_name: str
     category: str
@@ -76,6 +101,8 @@ class AccountingPolicy(BaseModel):
     require_audit_trail: bool = True
 
 class AuditEvent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     entity_type: str
     entity_id: str
@@ -85,6 +112,8 @@ class AuditEvent(BaseModel):
     details: Optional[str] = None
 
 class AgentRun(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     agent_version: str
     attack_id: Optional[str] = None

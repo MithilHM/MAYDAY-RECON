@@ -4,6 +4,9 @@ Generates candidate repair interventions (PROMPT, TOOL, WORKFLOW, POLICY, MEMORY
 evaluates candidates empirically against the regression suite, and selects the optimal verified fix.
 """
 from typing import Dict, List, Any, Optional
+import concurrent.futures
+import os
+import tempfile
 
 class InterventionEngine:
     def generate_candidates(self, failure_report: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -66,7 +69,9 @@ class InterventionEngine:
         self,
         candidates: List[Dict[str, Any]],
         attack_spec: Dict[str, Any],
-        base_version: str = "v0.1"
+        base_version: str = "v0.1",
+        parallel: bool = True,
+        max_workers: int = 4,
     ) -> Dict[str, Dict[str, Any]]:
         """Empirically test each candidate on origin attack + full suite.
 
@@ -117,29 +122,95 @@ class InterventionEngine:
             ev = DeterministicEvaluator(attack, gateway.trace_logs, res).evaluate()
             return ev
 
-        baseline_outcome = {
-            a["id"]: _run(a, base_version, []).get("outcome", "FAIL")
-            for a in suite
-        }
+        def _run_isolated(attack: Dict[str, Any], version: str,
+                          interventions: List[Dict[str, Any]]):
+            # Thread-safe: each run gets its own tmp SQLite file so no
+            # concurrent writes ever hit the shared DB_FILE.
+            fd, tmp = tempfile.mkstemp(suffix=".db")
+            os.close(fd)
+            try:
+                seed_database(tmp)
+                gateway = ToolGateway(db_path=tmp, active_attack=attack)
+                bot = ReconBot(gateway=gateway, version=version,
+                               interventions=interventions)
+                txn_id = attack.get("target", {}).get("txn_id", "TXN-1847")
+                try:
+                    res = bot.reconcile_transaction(txn_id)
+                except Exception as e:
+                    res = {"decision": "BLOCK", "reason": str(e)}
+                ev = DeterministicEvaluator(
+                    attack, gateway.trace_logs, res).evaluate()
+                return ev
+            finally:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
-        results: Dict[str, Dict[str, Any]] = {}
-        for cand in candidates:
-            origin_ev = _run(attack_spec, base_version, [cand])
-            passed = 0
-            new_failure = False
-            for attack in suite:
-                ev = _run(attack, base_version, [cand])
-                if ev.get("outcome") == "PASS":
-                    passed += 1
-                elif baseline_outcome.get(attack["id"]) == "PASS":
-                    new_failure = True
-            results[cand["id"]] = {
+        def _result_entry(origin_ev: Dict[str, Any], suite_evs: List[Dict[str, Any]],
+                          baseline_outcome: Dict[str, str]) -> Dict[str, Any]:
+            passed = sum(1 for ev in suite_evs if ev.get("outcome") == "PASS")
+            new_failure = any(
+                ev.get("outcome") != "PASS"
+                and baseline_outcome.get(attack["id"]) == "PASS"
+                for attack, ev in zip(suite, suite_evs)
+            )
+            return {
                 "origin_far": origin_ev.get("far_score", 0.0),
                 "far_score": origin_ev.get("far_score", 0.0),
                 "origin_outcome": origin_ev.get("outcome", "FAIL"),
                 "regression_pass_rate": round(passed / len(suite), 3) if suite else 0.0,
                 "creates_new_failure": new_failure,
             }
+
+        if not parallel:
+            baseline_outcome = {
+                a["id"]: _run(a, base_version, []).get("outcome", "FAIL")
+                for a in suite
+            }
+
+            results: Dict[str, Dict[str, Any]] = {}
+            for cand in candidates:
+                origin_ev = _run(attack_spec, base_version, [cand])
+                passed = 0
+                new_failure = False
+                for attack in suite:
+                    ev = _run(attack, base_version, [cand])
+                    if ev.get("outcome") == "PASS":
+                        passed += 1
+                    elif baseline_outcome.get(attack["id"]) == "PASS":
+                        new_failure = True
+                results[cand["id"]] = {
+                    "origin_far": origin_ev.get("far_score", 0.0),
+                    "far_score": origin_ev.get("far_score", 0.0),
+                    "origin_outcome": origin_ev.get("outcome", "FAIL"),
+                    "regression_pass_rate": round(passed / len(suite), 3) if suite else 0.0,
+                    "creates_new_failure": new_failure,
+                }
+            return results
+
+        workers = max(1, max_workers or 1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            base_futs = {
+                ex.submit(_run_isolated, a, base_version, []): a for a in suite
+            }
+            baseline_outcome = {}
+            for fut, attack in base_futs.items():
+                try:
+                    baseline_outcome[attack["id"]] = fut.result().get("outcome", "FAIL")
+                except Exception:
+                    baseline_outcome[attack["id"]] = "FAIL"
+
+            results = {}
+            for cand in candidates:
+                origin_fut = ex.submit(_run_isolated, attack_spec, base_version, [cand])
+                suite_futs = [
+                    ex.submit(_run_isolated, attack, base_version, [cand])
+                    for attack in suite
+                ]
+                origin_ev = origin_fut.result()
+                suite_evs = [f.result() for f in suite_futs]
+                results[cand["id"]] = _result_entry(origin_ev, suite_evs, baseline_outcome)
         return results
 
     def select_best_intervention(

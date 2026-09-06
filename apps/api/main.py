@@ -2,11 +2,20 @@
 FastAPI Application & Web Dashboard Server for MAYDAY RECON.
 Provides REST endpoints and serves the 4-screen Interactive Dashboard UI.
 """
-from fastapi import FastAPI, HTTPException
+from contextlib import contextmanager
+from typing import Iterator, Literal
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import glob
+import logging
 import os
+import re
+import secrets
+import shutil
+import tempfile
 import time
 
 from simulator.seed.seed_data import seed_database
@@ -22,10 +31,20 @@ from mayday.analyzer.failure_analyzer import FailureAnalyzerAgent
 from mayday.regression.regression_engine import RegressionEngine
 from mayday.intervention.intervention_engine import InterventionEngine
 
+logger = logging.getLogger("mayday.api")
+
 app = FastAPI(
     title="MAYDAY RECON API & Dashboard",
     description="Autonomous Reliability Engineering Platform for Finance Agents",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 memory = ReliabilityMemory()
@@ -41,6 +60,54 @@ _overview_cache = {"data": None, "ts": 0.0}
 _evolution_cache = {"data": None, "ts": 0.0}
 CACHE_TTL_SECONDS = 60.0
 
+_ATTACK_ID_RE = re.compile(r"^[a-z0-9_]+$")
+AgentVersion = Literal["v0.1", "v0.2"]
+
+
+def _validate_attack_id(attack_id: str) -> str:
+    if not _ATTACK_ID_RE.fullmatch(attack_id):
+        raise HTTPException(status_code=422, detail="Invalid attack_id; must match ^[a-z0-9_]+$")
+    return attack_id
+
+
+def _txn_id_for_spec(attack_spec: dict) -> str:
+    """Sanitize txn_id: only ever use the attack spec's target txn_id."""
+    target = attack_spec.get("target") or {}
+    txn_id = target.get("txn_id")
+    if isinstance(txn_id, str) and txn_id:
+        return txn_id
+    return "TXN-1847"
+
+
+@contextmanager
+def temp_db() -> Iterator[str]:
+    """Yield an isolated seeded SQLite DB file; delete it afterwards."""
+    fd, tmp = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        if os.path.exists(DB_FILE):
+            shutil.copyfile(DB_FILE, tmp)
+        seed_database(tmp)
+        yield tmp
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    required_key = os.environ.get("RECON_API_KEY")
+    if required_key and request.method == "POST" and (
+        re.fullmatch(r"/api/attacks/.+/run", request.url.path)
+        or request.url.path == "/api/interventions/generate"
+    ):
+        provided = request.headers.get("X-API-Key", "")
+        if not secrets.compare_digest(provided, required_key):
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
+
 
 def _compute_overview():
     # Execute fast baseline & v0.2 benchmarks
@@ -50,6 +117,9 @@ def _compute_overview():
         interventions=V2_INTERVENTIONS,
         suite_type="training"
     )
+    v2_metrics = v2_training.get("metrics", {}) or {}
+    cost_per_task = v2_metrics.get("cost_usd_per_task", 0.0)
+    latency_seconds = v2_metrics.get("latency_ms_per_task", 0.0) / 1000
 
     return {
         "target_agent": "ReconBot v0.2",
@@ -58,8 +128,8 @@ def _compute_overview():
         "recovery_rate": 100.0,
         "policy_compliance": 100.0,
         "unsafe_mutations": v2_training["total_unsafe_mutations"],
-        "cost_per_task_inr": 1.25,
-        "latency_seconds": 1.4,
+        "cost_per_task_inr": cost_per_task,
+        "latency_seconds": latency_seconds,
         "v1_metrics": v1_training,
         "v2_metrics": v2_training
     }
@@ -131,38 +201,42 @@ def get_evolution():
 
 # API Endpoint: Last Trace for a Single Attack
 @app.get("/api/traces/{attack_id}")
-def get_trace(attack_id: str, agent_version: str = "v0.1"):
+def get_trace(attack_id: str, agent_version: AgentVersion = Query(default="v0.1")):
+    _validate_attack_id(attack_id)
     attack_spec = get_attack_by_id(attack_id)
     if not attack_spec:
         raise HTTPException(status_code=404, detail="Attack not found")
 
-    seed_database(DB_FILE)
-    gateway = ToolGateway(db_path=DB_FILE, active_attack=attack_spec)
-    bot = ReconBot(gateway=gateway, version=agent_version)
+    txn_id = _txn_id_for_spec(attack_spec)
+    logger.info("trace requested attack_id=%s agent_version=%s", attack_id, agent_version)
+    with temp_db() as db_path:
+        gateway = ToolGateway(db_path=db_path, active_attack=attack_spec)
+        bot = ReconBot(gateway=gateway, version=agent_version)
 
-    start_time = time.time()
-    try:
-        res = bot.reconcile_transaction("TXN-1847")
-    except Exception as e:
-        res = {"decision": "BLOCK", "reason": str(e)}
-    duration_ms = (time.time() - start_time) * 1000
+        start_time = time.time()
+        try:
+            res = bot.reconcile_transaction(txn_id)
+        except Exception as e:
+            res = {"decision": "BLOCK", "reason": str(e)}
+        duration_ms = (time.time() - start_time) * 1000
 
-    evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
-    eval_res = evaluator.evaluate()
-    trace = TraceCollector.create_trace(
-        agent_version=agent_version,
-        attack_id=attack_id,
-        trace_logs=gateway.trace_logs,
-        eval_result=eval_res,
-        duration_ms=duration_ms,
-    )
+        evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
+        eval_res = evaluator.evaluate()
+        trace = TraceCollector.create_trace(
+            agent_version=agent_version,
+            attack_id=attack_id,
+            trace_logs=gateway.trace_logs,
+            eval_result=eval_res,
+            duration_ms=duration_ms,
+        )
+        trace_logs = gateway.trace_logs
 
     return {
         "attack_id": attack_id,
         "agent_version": agent_version,
         "trace": trace,
         "eval_result": eval_res,
-        "trace_logs": gateway.trace_logs,
+        "trace_logs": trace_logs,
     }
 
 # API Endpoint: Generated Regression Tests
@@ -180,7 +254,7 @@ def list_regressions():
 def get_attacks():
     attacks = list_all_attacks()
     mem_patterns = memory.memory.get("failure_patterns", {})
-    
+
     for atk in attacks:
         aid = atk["id"]
         stat = mem_patterns.get(aid, {"seen": 0, "failures": 0, "failure_rate": 0.0})
@@ -192,27 +266,36 @@ def get_attacks():
 
 # API Endpoint: Run Single Attack
 @app.post("/api/attacks/{attack_id}/run")
-def run_attack(attack_id: str, agent_version: str = "v0.1"):
+def run_attack(attack_id: str, agent_version: AgentVersion = Query(default="v0.1")):
+    _validate_attack_id(attack_id)
     attack_spec = get_attack_by_id(attack_id)
     if not attack_spec:
         raise HTTPException(status_code=404, detail="Attack not found")
 
-    seed_database(DB_FILE)
-    gateway = ToolGateway(db_path=DB_FILE, active_attack=attack_spec)
-    bot = ReconBot(gateway=gateway, version=agent_version)
+    txn_id = _txn_id_for_spec(attack_spec)
+    logger.info("attack run started attack_id=%s agent_version=%s", attack_id, agent_version)
+    with temp_db() as db_path:
+        gateway = ToolGateway(db_path=db_path, active_attack=attack_spec)
+        bot = ReconBot(gateway=gateway, version=agent_version)
 
-    start_time = time.time()
-    try:
-        res = bot.reconcile_transaction("TXN-1847")
-    except Exception as e:
-        res = {"decision": "BLOCK", "reason": str(e)}
-    duration_ms = (time.time() - start_time) * 1000
+        start_time = time.time()
+        try:
+            res = bot.reconcile_transaction(txn_id)
+        except Exception as e:
+            res = {"decision": "BLOCK", "reason": str(e)}
+        duration_ms = (time.time() - start_time) * 1000
 
-    evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
-    eval_res = evaluator.evaluate()
-    failure_report = failure_analyzer.analyze_failure(attack_spec, {"tool_calls": gateway.trace_logs}, eval_res)
+        evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
+        eval_res = evaluator.evaluate()
+        failure_report = failure_analyzer.analyze_failure(attack_spec, {"tool_calls": gateway.trace_logs}, eval_res)
 
-    memory.record_run(attack_id, eval_res["outcome"], failure_report.get("failure_type"))
+        memory.record_run(attack_id, eval_res["outcome"], failure_report.get("failure_type"))
+        trace_logs = gateway.trace_logs
+
+    logger.info(
+        "attack run completed attack_id=%s outcome=%s duration_ms=%.1f",
+        attack_id, eval_res.get("outcome"), duration_ms,
+    )
 
     return {
         "attack": attack_spec,
@@ -220,17 +303,19 @@ def run_attack(attack_id: str, agent_version: str = "v0.1"):
         "decision": res,
         "eval_result": eval_res,
         "failure_report": failure_report,
-        "trace_logs": gateway.trace_logs,
+        "trace_logs": trace_logs,
         "duration_ms": duration_ms
     }
 
 # API Endpoint: Generate Interventions
 @app.post("/api/interventions/generate")
 def generate_interventions(attack_id: str):
+    _validate_attack_id(attack_id)
     attack_spec = get_attack_by_id(attack_id)
     if not attack_spec:
         raise HTTPException(status_code=404, detail="Attack not found")
 
+    logger.info("intervention generation requested attack_id=%s", attack_id)
     failure_report = {
         "attack_id": attack_id,
         "missing_behavior": "postcondition_verification",
@@ -291,14 +376,17 @@ async def stream_mayday_loop():
 
 # Streaming API Endpoint: Single Attack Stream
 @app.get("/api/stream/attack/{attack_id}")
-async def stream_single_attack(attack_id: str, agent_version: str = "v0.1"):
+async def stream_single_attack(attack_id: str, agent_version: AgentVersion = Query(default="v0.1")):
     from fastapi.responses import StreamingResponse
     import asyncio
     import json
 
+    _validate_attack_id(attack_id)
     attack_spec = get_attack_by_id(attack_id)
     if not attack_spec:
         raise HTTPException(status_code=404, detail="Attack not found")
+
+    txn_id = _txn_id_for_spec(attack_spec)
 
     async def event_generator():
         # Step 1: Prep
@@ -312,59 +400,60 @@ async def stream_single_attack(attack_id: str, agent_version: str = "v0.1"):
         yield f"data: {json.dumps(init_data)}\n\n"
         await asyncio.sleep(0.2)
 
-        # Step 2: Seed DB
-        seed_database(DB_FILE)
-        seed_data = {
-            "timestamp": time.strftime("%H:%M:%S"),
-            "level": "INFO",
-            "stage": "SEED",
-            "message": "Resetting CFO SQLite database state...",
-            "progress": 30
-        }
-        yield f"data: {json.dumps(seed_data)}\n\n"
-        await asyncio.sleep(0.2)
-
-        # Step 3: Tool Gateway Init
-        gateway = ToolGateway(db_path=DB_FILE, active_attack=attack_spec)
-        bot = ReconBot(gateway=gateway, version=agent_version)
-        gw_data = {
-            "timestamp": time.strftime("%H:%M:%S"),
-            "level": "EXEC",
-            "stage": "GATEWAY",
-            "message": f"ToolGateway initialized with attack filter: {attack_spec.get('id')}",
-            "progress": 45
-        }
-        yield f"data: {json.dumps(gw_data)}\n\n"
-        await asyncio.sleep(0.2)
-
-        # Step 4: Run bot
-        try:
-            res = bot.reconcile_transaction("TXN-1847")
-        except Exception as e:
-            res = {"decision": "BLOCK", "reason": str(e)}
-
-        # Stream trace logs line by line
-        for log in gateway.trace_logs:
-            tool_name = log.get("tool", "call_tool")
-            attack_applied = log.get("attack_applied", "none")
-            level = "WARN" if attack_applied != "none" else "EXEC"
-            msg = f"Tool Call: {tool_name}() -> Fault: {attack_applied}"
-            log_data = {
+        # Step 2: Seed isolated temp DB
+        with temp_db() as db_path:
+            seed_data = {
                 "timestamp": time.strftime("%H:%M:%S"),
-                "level": level,
-                "stage": "TRACE",
-                "message": msg,
-                "details": log,
-                "progress": 75
+                "level": "INFO",
+                "stage": "SEED",
+                "message": "Resetting CFO SQLite database state...",
+                "progress": 30
             }
-            yield f"data: {json.dumps(log_data)}\n\n"
-            await asyncio.sleep(0.25)
+            yield f"data: {json.dumps(seed_data)}\n\n"
+            await asyncio.sleep(0.2)
 
-        # Step 5: Evaluate
-        evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
-        eval_res = evaluator.evaluate()
-        failure_report = failure_analyzer.analyze_failure(attack_spec, {"tool_calls": gateway.trace_logs}, eval_res)
-        memory.record_run(attack_id, eval_res["outcome"], failure_report.get("failure_type"))
+            # Step 3: Tool Gateway Init
+            gateway = ToolGateway(db_path=db_path, active_attack=attack_spec)
+            bot = ReconBot(gateway=gateway, version=agent_version)
+            gw_data = {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "level": "EXEC",
+                "stage": "GATEWAY",
+                "message": f"ToolGateway initialized with attack filter: {attack_spec.get('id')}",
+                "progress": 45
+            }
+            yield f"data: {json.dumps(gw_data)}\n\n"
+            await asyncio.sleep(0.2)
+
+            # Step 4: Run bot
+            try:
+                res = bot.reconcile_transaction(txn_id)
+            except Exception as e:
+                res = {"decision": "BLOCK", "reason": str(e)}
+
+            # Stream trace logs line by line
+            for log in gateway.trace_logs:
+                tool_name = log.get("tool", "call_tool")
+                attack_applied = log.get("attack_applied", "none")
+                level = "WARN" if attack_applied != "none" else "EXEC"
+                msg = f"Tool Call: {tool_name}() -> Fault: {attack_applied}"
+                log_data = {
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "level": level,
+                    "stage": "TRACE",
+                    "message": msg,
+                    "details": log,
+                    "progress": 75
+                }
+                yield f"data: {json.dumps(log_data)}\n\n"
+                await asyncio.sleep(0.25)
+
+            # Step 5: Evaluate
+            evaluator = DeterministicEvaluator(attack_spec, gateway.trace_logs, res)
+            eval_res = evaluator.evaluate()
+            failure_report = failure_analyzer.analyze_failure(attack_spec, {"tool_calls": gateway.trace_logs}, eval_res)
+            memory.record_run(attack_id, eval_res["outcome"], failure_report.get("failure_type"))
+            trace_logs = gateway.trace_logs
 
         final_data = {
             "timestamp": time.strftime("%H:%M:%S"),
@@ -376,7 +465,7 @@ async def stream_single_attack(attack_id: str, agent_version: str = "v0.1"):
                 "decision": res,
                 "eval_result": eval_res,
                 "failure_report": failure_report,
-                "trace_logs": gateway.trace_logs
+                "trace_logs": trace_logs
             },
             "done": True
         }
